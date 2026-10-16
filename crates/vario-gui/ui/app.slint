@@ -3,6 +3,8 @@
 
 import { AboutSlint, Button, CheckBox, GroupBox, HorizontalBox, Palette, StandardListView, Switch, TabWidget, VerticalBox } from "std-widgets.slint";
 
+export { GaugeWindow } from "gauge.slint";
+
 export struct ClientRow {
     label: string,
     subagents: string,
@@ -115,6 +117,7 @@ export component AppWindow inherits Window {
     in property <string> journal;
 
     callback refresh();
+    callback open-gauge();
     callback repair();
     callback remove-all();
     callback mode-changed();
@@ -160,6 +163,10 @@ export component AppWindow inherits Window {
                     Button {
                         text: @tr("Remove Vario…");
                         clicked => { root.confirm-remove = true; }
+                    }
+                    Button {
+                        text: @tr("Floating gauge");
+                        clicked => { root.open-gauge(); }
                     }
                 }
                 if root.confirm-remove: GroupBox {

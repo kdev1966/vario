@@ -32,6 +32,10 @@ Les hooks consignent chaque délégation aux sous-agents de Vario dans un journa
 
 **Quota et thermostat (Claude Code).** Claude Code n'indique qu'à la ligne de statut la part de votre abonnement déjà consommée. La ligne de statut de Vario la relève et affiche `Vario · 5 h 23 % · 7 j 41 %` ; si vous avez déjà une ligne de statut, Vario l'enveloppe : elle reste exactement la même. Avant chaque prompt, le thermostat regarde la fenêtre la plus consommée : dès 50 %, il demande à la session principale de déléguer davantage ; dès 80 %, il vous avertit aussi ; à 100 %, il propose de changer d'agent après avoir enregistré une passation [Handoff](https://github.com/kdev1966/Handoff-CLI). `vario usage` affiche le quota, les tokens par modèle (session principale et sous-agents) sur 5 heures et 7 jours, la part du travail déléguée, et les serveurs MCP connectés mais jamais utilisés.
 
+Claude Code n'exécute les lignes de statut que dans le terminal : le quota est relevé quand vous utilisez Claude Code dans un terminal, pas depuis l'extension VS Code. Le reste (sous-agents, consignes, journal, `vario usage`) fonctionne partout.
+
+**Jauge flottante.** `vario-gui --gauge`, ou **Jauge flottante** dans l'application, ouvre une petite fenêtre toujours au premier plan, dessinée comme un plugin audio : un VU-mètre à aiguille pour le quota de 5 heures, une barre pour celui de 7 jours, l'état du thermostat en boutons de mode, et deux boutons rotatifs pour la part déléguée et le taux d'escalade. Déplacez-la par son en-tête.
+
 ## Installation
 
 **Binaires prêts à l'emploi**, sur la page [Releases](https://github.com/kdev1966/vario/releases) :

@@ -124,3 +124,51 @@ msgstr "Vario {}"
 msgctxt "AppWindow"
 msgid "Routes the simple tasks of your AI agents to cheaper models, through their own sub-agents. Local: Vario sends nothing to anyone. MIT licence."
 msgstr "Confie les tâches simples de vos agents IA à des modèles moins chers, grâce à leurs propres sous-agents. Local : Vario n'envoie rien à personne. Licence MIT."
+
+msgctxt "AppWindow"
+msgid "Floating gauge"
+msgstr "Jauge flottante"
+
+msgctxt "GaugeWindow"
+msgid "quota gauge"
+msgstr "jauge de quota"
+
+msgctxt "GaugeWindow"
+msgid "5 h"
+msgstr "5 h"
+
+msgctxt "GaugeWindow"
+msgid "7 d"
+msgstr "7 j"
+
+msgctxt "GaugeWindow"
+msgid "QUOTA"
+msgstr "QUOTA"
+
+msgctxt "GaugeWindow"
+msgid "NORMAL"
+msgstr "NORMAL"
+
+msgctxt "GaugeWindow"
+msgid "MORE"
+msgstr "RENFORCÉ"
+
+msgctxt "GaugeWindow"
+msgid "ALERT"
+msgstr "ALERTE"
+
+msgctxt "GaugeWindow"
+msgid "LIMIT"
+msgstr "LIMITE"
+
+msgctxt "GaugeWindow"
+msgid "DELEGATED"
+msgstr "DÉLÉGUÉ"
+
+msgctxt "GaugeWindow"
+msgid "ESCALATED"
+msgstr "ESCALADES"
+
+msgctxt "GaugeWindow"
+msgid "7 DAYS"
+msgstr "7 JOURS"
