@@ -1,0 +1,30 @@
+# Builds Vario.app for the release; dist calls it (build-local-artifacts-jobs in
+# dist-workspace.toml) and the host job attaches every `artifacts-*` upload to the
+# GitHub Release.
+name: Build the macOS app
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  macos-app:
+    name: Vario.app (${{ matrix.target }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: scripts/macos-app.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-macos-app-${{ matrix.target }}
+          path: dist/Vario-macos-*.zip

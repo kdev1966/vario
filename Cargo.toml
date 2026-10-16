@@ -8,6 +8,12 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/kdev1966/vario"
+readme = "README.md"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
