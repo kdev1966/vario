@@ -12,6 +12,7 @@ use serde_json::{Map, Value, json};
 
 use crate::clients::subagents::{self, SESSION_CONTEXT};
 use crate::clients::{Env, by_name};
+use crate::gui;
 use crate::install;
 use crate::lang::Lang;
 use crate::parts::Kind;
@@ -101,18 +102,22 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
         return quiet(via);
     }
     match event {
-        Event::SessionStart => match via {
-            Via::Cursor | Via::OpenCode => {
-                json!({ "additional_context": SESSION_CONTEXT }).to_string()
+        Event::SessionStart => {
+            gui::open_gauge(env, data_dir);
+            // Cursor takes Vario's guidance from this hook, also when it runs Claude
+            // Code's; the other clients read it from their instructions file.
+            match via {
+                Via::Cursor => json!({ "additional_context": SESSION_CONTEXT }).to_string(),
+                Via::Claude if in_cursor => json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "SessionStart",
+                        "additionalContext": SESSION_CONTEXT,
+                    }
+                })
+                .to_string(),
+                _ => quiet(via),
             }
-            Via::Claude | Via::Codex | Via::VsCode => json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "SessionStart",
-                    "additionalContext": SESSION_CONTEXT,
-                }
-            })
-            .to_string(),
-        },
+        }
         // The quota is Claude Code's subscription; inside Cursor it says nothing.
         Event::PromptSubmit if in_cursor => quiet(via),
         Event::PromptSubmit => thermostat(env, data_dir).unwrap_or_else(|| quiet(via)),
@@ -592,6 +597,33 @@ mod tests {
         );
         let value: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(value["additional_context"], SESSION_CONTEXT);
+    }
+
+    #[test]
+    fn other_clients_start_quietly() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = env_in(dir.path());
+        for (via, quiet) in [
+            (Via::Claude, ""),
+            (Via::OpenCode, ""),
+            (Via::Codex, "{}"),
+            (Via::VsCode, "{}"),
+        ] {
+            assert_eq!(
+                run(Event::SessionStart, via, "{}", &env, dir.path()),
+                quiet,
+                "{via:?}"
+            );
+        }
+        let in_cursor = json!({ "cursor_version": "3.1.0" }).to_string();
+        let out = run(
+            Event::SessionStart,
+            Via::Claude,
+            &in_cursor,
+            &env,
+            dir.path(),
+        );
+        assert!(out.contains("additionalContext"), "{out}");
     }
 
     #[test]

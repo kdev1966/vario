@@ -5,6 +5,7 @@ pub mod choices;
 pub mod clients;
 pub mod error;
 pub mod files;
+pub mod gui;
 pub mod handoff;
 pub mod hooks;
 pub mod install;
