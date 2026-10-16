@@ -58,6 +58,7 @@ impl Sandbox {
             .env_clear()
             .env("HOME", self.dir.path().join("home"))
             .env("VARIO_HOME", self.data_dir())
+            .env("VARIO_LANG", "en")
             .env("PATH", self.dir.path().join("bin"))
             .stdin(Stdio::null())
             .output()

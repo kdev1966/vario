@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::error::{Error, Result};
-use crate::files::{self, Session};
+use crate::error::{Error, Reason, Result};
+use crate::files::{self, Action, Session};
 
 /// The key under which Vario registers itself in JSON configurations.
 pub const SERVER_NAME: &str = "vario";
@@ -55,12 +55,11 @@ impl Part for JsonEntry {
     fn apply(&self, session: &mut Session) -> Result<()> {
         let mut data = files::read_json(&self.path)?;
         let keys = key_refs(&self.keys);
-        let container = files::nested_mut(&mut data, &keys, true).ok_or_else(|| {
-            Error::config(&self.path, format!("'{}' is not an object", keys.join(".")))
-        })?;
+        let container = files::nested_mut(&mut data, &keys, true)
+            .ok_or_else(|| Error::config(&self.path, Reason::NotAnObject(keys.join("."))))?;
         container.insert(self.name.clone(), self.value.clone());
-        let description = format!("{}: {}.{}", self.path.display(), keys.join("."), self.name);
-        session.write_text(&self.path, &files::dump_json(&data), description)
+        let action = Action::EntrySet(format!("{}.{}", keys.join("."), self.name));
+        session.write_text(&self.path, &files::dump_json(&data), action)
     }
 
     fn remove(&self, session: &mut Session) -> Result<()> {
@@ -74,8 +73,8 @@ impl Part for JsonEntry {
         if !removed {
             return Ok(());
         }
-        let description = format!("{}: removed {}", self.path.display(), self.name);
-        session.write_text(&self.path, &files::dump_json(&data), description)
+        let action = Action::EntryRemoved(self.name.clone());
+        session.write_text(&self.path, &files::dump_json(&data), action)
     }
 
     fn present(&self) -> bool {
@@ -123,9 +122,8 @@ impl Part for JsonHooks {
             data.entry(key.clone()).or_insert_with(|| value.clone());
         }
         let keys = key_refs(&self.keys);
-        let hooks = files::nested_mut(&mut data, &keys, true).ok_or_else(|| {
-            Error::config(&self.path, format!("'{}' is not an object", keys.join(".")))
-        })?;
+        let hooks = files::nested_mut(&mut data, &keys, true)
+            .ok_or_else(|| Error::config(&self.path, Reason::NotAnObject(keys.join("."))))?;
         for (event, entry) in &self.entries {
             let mut items = match hooks.get(event) {
                 None => Vec::new(),
@@ -133,7 +131,7 @@ impl Part for JsonHooks {
                 Some(_) => {
                     return Err(Error::config(
                         &self.path,
-                        format!("hooks for {event} are not a list"),
+                        Reason::HooksNotAList(event.clone()),
                     ));
                 }
             };
@@ -141,8 +139,8 @@ impl Part for JsonHooks {
             items.push(entry.clone());
             hooks.insert(event.clone(), Value::Array(items));
         }
-        let description = format!("{}: hooks {}", self.path.display(), self.events());
-        session.write_text(&self.path, &files::dump_json(&data), description)
+        let action = Action::HooksSet(self.events());
+        session.write_text(&self.path, &files::dump_json(&data), action)
     }
 
     fn remove(&self, session: &mut Session) -> Result<()> {
@@ -170,8 +168,8 @@ impl Part for JsonHooks {
         if !changed {
             return Ok(());
         }
-        let description = format!("{}: removed hooks {}", self.path.display(), self.events());
-        session.write_text(&self.path, &files::dump_json(&data), description)
+        let action = Action::HooksRemoved(self.events());
+        session.write_text(&self.path, &files::dump_json(&data), action)
     }
 
     fn present(&self) -> bool {
@@ -205,11 +203,10 @@ impl Part for MarkdownBlock {
 
     fn apply(&self, session: &mut Session) -> Result<()> {
         let current = files::read_text(&self.path)?;
-        let description = format!("{}: Vario instructions", self.path.display());
         session.write_text(
             &self.path,
             &files::upsert_block(&current, &self.body),
-            description,
+            Action::InstructionsSet,
         )
     }
 
@@ -220,14 +217,9 @@ impl Part for MarkdownBlock {
         }
         let remaining = files::remove_block(&current);
         if remaining.is_empty() {
-            let description = format!(
-                "{}: deleted (it only held Vario instructions)",
-                self.path.display()
-            );
-            session.delete(&self.path, description)
+            session.delete(&self.path, Action::InstructionsFileDeleted)
         } else {
-            let description = format!("{}: removed Vario instructions", self.path.display());
-            session.write_text(&self.path, &remaining, description)
+            session.write_text(&self.path, &remaining, Action::InstructionsRemoved)
         }
     }
 
@@ -259,7 +251,7 @@ impl OwnFile {
     }
 
     fn foreign(path: &Path) -> Error {
-        Error::config(path, "is not managed by Vario (its marker is missing)")
+        Error::config(path, Reason::Foreign)
     }
 }
 
@@ -272,8 +264,7 @@ impl Part for OwnFile {
         if !self.owned()? {
             return Err(Self::foreign(&self.path));
         }
-        let description = format!("{}: written", self.path.display());
-        session.write_text(&self.path, &self.content, description)
+        session.write_text(&self.path, &self.content, Action::Written)
     }
 
     fn remove(&self, session: &mut Session) -> Result<()> {
@@ -283,8 +274,7 @@ impl Part for OwnFile {
         if !self.owned()? {
             return Err(Self::foreign(&self.path));
         }
-        let description = format!("{}: deleted", self.path.display());
-        session.delete(&self.path, description)
+        session.delete(&self.path, Action::Deleted)
     }
 
     fn present(&self) -> bool {

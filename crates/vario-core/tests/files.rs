@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 use vario_core::Error;
-use vario_core::files::{self, BLOCK_BEGIN, Session};
+use vario_core::files::{self, Action, BLOCK_BEGIN, Session};
 
 fn object(value: Value) -> Map<String, Value> {
     value.as_object().expect("a JSON object").clone()
@@ -40,15 +40,17 @@ fn session_backs_up_once_and_dry_run_writes_nothing() {
     fs::write(&path, "original").unwrap();
 
     let mut dry = Session::with_backup_dir(true, dir.path().join("backups-dry"));
-    dry.write_text(&path, "changed", "test").unwrap();
+    dry.write_text(&path, "changed", Action::Written).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "original");
-    assert_eq!(dry.changes(), ["test"]);
+    assert_eq!(dry.changes().len(), 1);
+    assert_eq!(dry.changes()[0].path, path);
+    assert_eq!(dry.changes()[0].action, Action::Written);
     assert!(!dir.path().join("backups-dry").exists());
 
     let backups = dir.path().join("backups");
     let mut session = Session::with_backup_dir(false, backups.clone());
-    session.write_text(&path, "one", "first").unwrap();
-    session.write_text(&path, "two", "second").unwrap();
+    session.write_text(&path, "one", Action::Written).unwrap();
+    session.write_text(&path, "two", Action::Written).unwrap();
     let copies = find_named(&backups, "config.json");
     assert_eq!(copies.len(), 1);
     assert_eq!(fs::read_to_string(&copies[0]).unwrap(), "original");
@@ -78,7 +80,7 @@ fn unchanged_content_is_not_a_change() {
     let path = dir.path().join("same.md");
     fs::write(&path, "same").unwrap();
     let mut session = Session::with_backup_dir(false, dir.path().join("backups"));
-    session.write_text(&path, "same", "nothing").unwrap();
+    session.write_text(&path, "same", Action::Written).unwrap();
     assert!(session.changes().is_empty());
     assert!(!dir.path().join("backups").exists());
 }
@@ -90,15 +92,19 @@ fn delete_backs_up_and_dry_run_keeps_the_file() {
     fs::write(&path, "agent").unwrap();
 
     let mut dry = Session::with_backup_dir(true, dir.path().join("backups-dry"));
-    dry.delete(&path, "remove agent").unwrap();
+    dry.delete(&path, Action::Deleted).unwrap();
     assert!(path.exists());
-    assert_eq!(dry.changes(), ["remove agent"]);
+    assert_eq!(dry.changes().len(), 1);
 
     let mut session = Session::with_backup_dir(false, dir.path().join("backups"));
-    session.delete(&path, "remove agent").unwrap();
-    session.delete(&path, "already gone").unwrap();
+    session.delete(&path, Action::Deleted).unwrap();
+    session.delete(&path, Action::Deleted).unwrap();
     assert!(!path.exists());
-    assert_eq!(session.changes(), ["remove agent"]);
+    assert_eq!(
+        session.changes().len(),
+        1,
+        "deleting a missing file is not a change"
+    );
 }
 
 #[test]
@@ -112,12 +118,16 @@ fn restore_undoes_a_whole_session() {
 
     let backups = dir.path().join("backups");
     let mut session = Session::with_backup_dir(false, backups.clone());
-    session.write_text(&edited, "{}\n", "edit").unwrap();
     session
-        .write_text(&edited, "{\"a\": 1}\n", "edit again")
+        .write_text(&edited, "{}\n", Action::Written)
         .unwrap();
-    session.write_text(&created, "agent", "create").unwrap();
-    session.delete(&deleted, "delete").unwrap();
+    session
+        .write_text(&edited, "{\"a\": 1}\n", Action::Written)
+        .unwrap();
+    session
+        .write_text(&created, "agent", Action::Written)
+        .unwrap();
+    session.delete(&deleted, Action::Deleted).unwrap();
 
     let restored = files::restore(&backups).unwrap();
     assert_eq!(restored.len(), 3);

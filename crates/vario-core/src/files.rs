@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::error::{Error, Result, io};
+use crate::error::{Error, Reason, Result, io};
+use crate::lang::Lang;
 use crate::paths;
 
 pub const BLOCK_BEGIN: &str =
@@ -25,12 +26,71 @@ const BLOCK_PREFIX: &str = "<!-- vario:begin";
 const MANIFEST: &str = "manifest.json";
 const MANIFEST_VERSION: u32 = 1;
 
+/// One change to a file, as shown in previews and reports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Change {
+    pub path: PathBuf,
+    pub action: Action,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Action {
+    /// A file that belongs to Vario was written.
+    Written,
+    Deleted,
+    /// An entry was set at this key path (`mcpServers.vario`).
+    EntrySet(String),
+    EntryRemoved(String),
+    /// Vario's hooks were set for these events (`SessionStart, Stop`).
+    HooksSet(String),
+    HooksRemoved(String),
+    InstructionsSet,
+    InstructionsRemoved,
+    /// The instructions file only held Vario's block, so it was deleted.
+    InstructionsFileDeleted,
+}
+
+impl Action {
+    pub fn text(&self, lang: Lang) -> String {
+        match (self, lang) {
+            (Action::Written, Lang::En) => "written".into(),
+            (Action::Written, Lang::Fr) => "écriture".into(),
+            (Action::Deleted, Lang::En) => "deleted".into(),
+            (Action::Deleted, Lang::Fr) => "suppression".into(),
+            (Action::EntrySet(key), Lang::En) => format!("set {key}"),
+            (Action::EntrySet(key), Lang::Fr) => format!("ajout de {key}"),
+            (Action::EntryRemoved(key), Lang::En) => format!("removed {key}"),
+            (Action::EntryRemoved(key), Lang::Fr) => format!("retrait de {key}"),
+            (Action::HooksSet(events), Lang::En) => format!("hooks {events}"),
+            (Action::HooksSet(events), Lang::Fr) => format!("hooks {events}"),
+            (Action::HooksRemoved(events), Lang::En) => format!("removed hooks {events}"),
+            (Action::HooksRemoved(events), Lang::Fr) => format!("retrait des hooks {events}"),
+            (Action::InstructionsSet, Lang::En) => "Vario instructions".into(),
+            (Action::InstructionsSet, Lang::Fr) => "consignes de Vario".into(),
+            (Action::InstructionsRemoved, Lang::En) => "removed Vario instructions".into(),
+            (Action::InstructionsRemoved, Lang::Fr) => "retrait des consignes de Vario".into(),
+            (Action::InstructionsFileDeleted, Lang::En) => {
+                "deleted (it only held Vario instructions)".into()
+            }
+            (Action::InstructionsFileDeleted, Lang::Fr) => {
+                "suppression (il ne contenait que les consignes de Vario)".into()
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Change {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.path.display(), self.action.text(Lang::En))
+    }
+}
+
 /// One run of setup or removal: where backups go, and what changed.
 #[derive(Debug)]
 pub struct Session {
     dry_run: bool,
     backup_dir: PathBuf,
-    changes: Vec<String>,
+    changes: Vec<Change>,
     touched: HashSet<PathBuf>,
     manifest: Manifest,
 }
@@ -83,25 +143,20 @@ impl Session {
         &self.backup_dir
     }
 
-    /// Descriptions of the changes made, or that a dry run would make.
-    pub fn changes(&self) -> &[String] {
+    /// The changes made, or that a dry run would make.
+    pub fn changes(&self) -> &[Change] {
         &self.changes
     }
 
     /// Write `content` to `path`, unless the file already holds exactly that.
-    pub fn write_text(
-        &mut self,
-        path: &Path,
-        content: &str,
-        description: impl Into<String>,
-    ) -> Result<()> {
+    pub fn write_text(&mut self, path: &Path, content: &str, action: Action) -> Result<()> {
         match fs::read(path) {
             Ok(current) if current == content.as_bytes() => return Ok(()),
             Ok(_) => {}
             Err(err) if err.kind() == ErrorKind::NotFound => {}
             Err(err) => return Err(io(path)(err)),
         }
-        self.changes.push(description.into());
+        self.note(path, action);
         if self.dry_run {
             return Ok(());
         }
@@ -110,16 +165,23 @@ impl Session {
     }
 
     /// Delete `path` if it exists.
-    pub fn delete(&mut self, path: &Path, description: impl Into<String>) -> Result<()> {
+    pub fn delete(&mut self, path: &Path, action: Action) -> Result<()> {
         if !path.exists() {
             return Ok(());
         }
-        self.changes.push(description.into());
+        self.note(path, action);
         if self.dry_run {
             return Ok(());
         }
         self.record(path)?;
         fs::remove_file(path).map_err(io(path))
+    }
+
+    fn note(&mut self, path: &Path, action: Action) {
+        self.changes.push(Change {
+            path: path.to_path_buf(),
+            action,
+        });
     }
 
     /// Save the state of `path` before its first change in this session.
@@ -145,9 +207,8 @@ impl Session {
             backup,
         });
         let manifest_path = self.backup_dir.join(MANIFEST);
-        let json = serde_json::to_string_pretty(&self.manifest).map_err(|err| {
-            Error::config(path, format!("cannot be recorded for restore ({err})"))
-        })?;
+        let json = serde_json::to_string_pretty(&self.manifest)
+            .map_err(|err| Error::config(path, Reason::Unrecordable(err.to_string())))?;
         fs::create_dir_all(&self.backup_dir).map_err(io(&self.backup_dir))?;
         atomic_write(&manifest_path, &(json + "\n"))
     }
@@ -183,12 +244,8 @@ pub fn backups(data_dir: &Path) -> Vec<PathBuf> {
 fn read_manifest(backup_dir: &Path) -> Result<Manifest> {
     let manifest_path = backup_dir.join(MANIFEST);
     let text = fs::read_to_string(&manifest_path).map_err(io(&manifest_path))?;
-    serde_json::from_str(&text).map_err(|err| {
-        Error::config(
-            &manifest_path,
-            format!("is not a valid backup manifest ({err})"),
-        )
-    })
+    serde_json::from_str(&text)
+        .map_err(|err| Error::config(&manifest_path, Reason::BadManifest(err.to_string())))
 }
 
 /// What [`restore`] would do: each path, and whether it is put back (`true`) or
@@ -261,7 +318,7 @@ pub fn read_json(path: &Path) -> Result<Map<String, Value>> {
         Ok(text) => text,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Map::new()),
         Err(err) if err.kind() == ErrorKind::InvalidData => {
-            return Err(Error::config(path, "is not UTF-8 text"));
+            return Err(Error::config(path, Reason::NotUtf8));
         }
         Err(err) => return Err(io(path)(err)),
     };
@@ -271,8 +328,8 @@ pub fn read_json(path: &Path) -> Result<Map<String, Value>> {
     }
     match serde_json::from_str(text) {
         Ok(Value::Object(data)) => Ok(data),
-        Ok(_) => Err(Error::config(path, "does not contain a JSON object")),
-        Err(_) => Err(Error::config(path, "is not plain JSON (comments?)")),
+        Ok(_) => Err(Error::config(path, Reason::NotJsonObject)),
+        Err(_) => Err(Error::config(path, Reason::NotPlainJson)),
     }
 }
 
@@ -287,7 +344,7 @@ pub fn read_text(path: &Path) -> Result<String> {
         Ok(text) => Ok(text),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(String::new()),
         Err(err) if err.kind() == ErrorKind::InvalidData => {
-            Err(Error::config(path, "is not UTF-8 text"))
+            Err(Error::config(path, Reason::NotUtf8))
         }
         Err(err) => Err(io(path)(err)),
     }

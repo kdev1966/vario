@@ -2,7 +2,8 @@
 //! CLI calls it with what the user chose, after a preview.
 
 use crate::clients::{Env, Integration, integrations};
-use crate::files::Session;
+use crate::error::Error;
+use crate::files::{Change, Session};
 use crate::parts::Kind;
 
 /// What happened to one client.
@@ -10,8 +11,15 @@ use crate::parts::Kind;
 pub struct Outcome {
     pub name: &'static str,
     pub label: &'static str,
-    pub changes: Vec<String>,
-    pub error: Option<String>,
+    pub changes: Vec<Change>,
+    /// Applying stops at the first error; removing attempts every part.
+    pub errors: Vec<Error>,
+}
+
+impl Outcome {
+    pub fn ok(&self) -> bool {
+        self.errors.is_empty()
+    }
 }
 
 pub fn detected(env: &Env) -> Vec<Integration> {
@@ -27,13 +35,14 @@ pub fn apply(session: &mut Session, chosen: &[Integration], env: &Env) -> Vec<Ou
         .iter()
         .map(|integration| {
             let before = session.changes().len();
-            let error = integration
+            let errors = integration
                 .parts(env)
                 .iter()
                 .try_for_each(|part| part.apply(session))
                 .err()
-                .map(|err| err.to_string());
-            outcome(integration, session, before, error)
+                .into_iter()
+                .collect();
+            outcome(integration, session, before, errors)
         })
         .collect()
 }
@@ -44,14 +53,12 @@ pub fn remove(session: &mut Session, chosen: &[Integration], env: &Env) -> Vec<O
         .iter()
         .map(|integration| {
             let before = session.changes().len();
-            let errors: Vec<String> = integration
+            let errors = integration
                 .parts(env)
                 .iter()
                 .filter_map(|part| part.remove(session).err())
-                .map(|err| err.to_string())
                 .collect();
-            let error = (!errors.is_empty()).then(|| errors.join("; "));
-            outcome(integration, session, before, error)
+            outcome(integration, session, before, errors)
         })
         .collect()
 }
@@ -60,13 +67,13 @@ fn outcome(
     integration: &Integration,
     session: &Session,
     before: usize,
-    error: Option<String>,
+    errors: Vec<Error>,
 ) -> Outcome {
     Outcome {
         name: integration.name,
         label: integration.label,
         changes: session.changes()[before..].to_vec(),
-        error,
+        errors,
     }
 }
 

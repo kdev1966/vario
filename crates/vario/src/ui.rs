@@ -2,17 +2,33 @@
 
 use std::io::{self, BufRead, IsTerminal, Write};
 
+use vario_core::lang::Lang;
+
+/// The text in the user's language: `tr!(lang, "Done: {count}.", "Terminé : {count}.")`.
+/// Both literals may use the same inline arguments.
+macro_rules! tr {
+    ($lang:expr, $en:literal, $fr:literal) => {
+        match $lang {
+            vario_core::lang::Lang::En => format!($en),
+            vario_core::lang::Lang::Fr => format!($fr),
+        }
+    };
+}
+pub(crate) use tr;
+
 pub struct Ui {
     input: Box<dyn BufRead>,
     out: Box<dyn Write>,
     /// A person can answer questions. Without one, Vario changes nothing unless
     /// `--yes` is given.
     pub interactive: bool,
+    pub lang: Lang,
 }
 
 impl Ui {
-    pub fn stdio() -> Self {
+    pub fn stdio(lang: Lang) -> Self {
         Ui {
+            lang,
             interactive: io::stdin().is_terminal() && io::stdout().is_terminal(),
             input: Box::new(io::stdin().lock()),
             out: Box::new(io::stdout()),
@@ -25,9 +41,14 @@ impl Ui {
     }
 
     /// Ask a yes/no question. An empty answer or the end of input gives `default`;
-    /// "y" or "yes" is yes, anything else is no.
+    /// "y", "yes", "o" or "oui" is yes, anything else is no.
     pub fn confirm(&mut self, question: &str, default: bool) -> bool {
-        let hint = if default { "[Y/n]" } else { "[y/N]" };
+        let hint = match (self.lang, default) {
+            (Lang::En, true) => "[Y/n]",
+            (Lang::En, false) => "[y/N]",
+            (Lang::Fr, true) => "[O/n]",
+            (Lang::Fr, false) => "[o/N]",
+        };
         let _ = write!(self.out, "{question} {hint} ");
         let _ = self.out.flush();
         let mut answer = String::new();
@@ -37,7 +58,7 @@ impl Ui {
         }
         match answer.trim().to_lowercase().as_str() {
             "" => default,
-            "y" | "yes" => true,
+            "y" | "yes" | "o" | "oui" => true,
             _ => false,
         }
     }
@@ -50,6 +71,7 @@ pub mod testing {
     use std::rc::Rc;
 
     use super::Ui;
+    use vario_core::lang::Lang;
 
     /// Output the test can read after handing a writer to the `Ui`.
     #[derive(Clone, Default)]
@@ -72,26 +94,37 @@ pub mod testing {
         }
     }
 
-    /// A `Ui` that answers with `answers`, one per line, and records what is printed.
+    /// An English `Ui` that answers with `answers`, one per line, and records what is
+    /// printed.
     pub fn scripted(answers: &str, interactive: bool) -> (Ui, Captured) {
+        scripted_in(Lang::En, answers, interactive)
+    }
+
+    pub fn scripted_in(lang: Lang, answers: &str, interactive: bool) -> (Ui, Captured) {
         let captured = Captured::default();
         let input = io::Cursor::new(answers.as_bytes().to_vec());
         let ui = Ui {
             input: Box::new(input),
             out: Box::new(captured.clone()),
             interactive,
+            lang,
         };
         (ui, captured)
     }
 
     #[test]
     fn answers_and_defaults() {
-        let (mut ui, out) = scripted("y\n\nno\nOui\n", true);
+        let (mut ui, out) = scripted("y\n\nno\nOui\nsure\n", true);
         assert!(ui.confirm("A?", false));
         assert!(ui.confirm("B?", true));
         assert!(!ui.confirm("C?", true));
-        assert!(!ui.confirm("D?", true), "only y and yes mean yes");
-        assert!(ui.confirm("E?", true), "end of input gives the default");
+        assert!(ui.confirm("D?", false), "French answers are accepted too");
+        assert!(!ui.confirm("E?", true), "anything else means no");
+        assert!(ui.confirm("F?", true), "end of input gives the default");
         assert!(out.text().starts_with("A? [y/N] B? [Y/n] "));
+
+        let (mut ui, out) = scripted_in(Lang::Fr, "\n", true);
+        assert!(!ui.confirm("Retirer ?", false));
+        assert!(out.text().starts_with("Retirer ? [o/N] "));
     }
 }

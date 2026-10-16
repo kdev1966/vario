@@ -7,6 +7,7 @@ pub mod error;
 pub mod files;
 pub mod handoff;
 pub mod install;
+pub mod lang;
 pub mod parts;
 pub mod paths;
 

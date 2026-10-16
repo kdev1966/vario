@@ -12,9 +12,10 @@ use vario_core::clients::{Env, Integration, integrations};
 use vario_core::files::{self, Session};
 use vario_core::handoff::{self, State};
 use vario_core::install::{self, Outcome};
+use vario_core::lang::Lang;
 use vario_core::parts::Kind;
 
-use crate::ui::Ui;
+use crate::ui::{Ui, tr};
 
 pub struct Context {
     pub env: Env,
@@ -29,6 +30,7 @@ pub fn install(
     dry_run: bool,
     yes: bool,
 ) -> Result<bool> {
+    let lang = ctx.ui.lang;
     let explicit = !names.is_empty();
     let candidates: Vec<Integration> = if explicit {
         integrations()
@@ -39,25 +41,27 @@ pub fn install(
         install::detected(&ctx.env)
     };
     if candidates.is_empty() {
-        let supported = labels(&integrations());
-        ctx.ui.say(format!(
-            "No supported AI client was found on this machine (supported: {supported})."
-        ));
+        no_client(&mut ctx.ui);
         return Ok(true);
     }
     if !explicit {
-        ctx.ui
-            .say(format!("AI clients found: {}", labels(&candidates)));
+        let found = labels(&candidates);
+        ctx.ui.say(tr!(
+            lang,
+            "AI clients found: {found}",
+            "Clients IA trouvés : {found}"
+        ));
     }
 
     let mut chosen = Vec::new();
     let mut declined = Vec::new();
     if manual && ctx.ui.interactive && !yes && !dry_run {
         for integration in candidates {
-            if ctx
-                .ui
-                .confirm(&format!("Configure {}?", integration.label), true)
-            {
+            let label = integration.label;
+            if ctx.ui.confirm(
+                &tr!(lang, "Configure {label}?", "Configurer {label} ?"),
+                true,
+            ) {
                 chosen.push(integration);
             } else {
                 declined.push(integration.name.to_string());
@@ -68,37 +72,47 @@ pub fn install(
     }
     if chosen.is_empty() {
         remember(ctx, &[], &declined)?;
-        ctx.ui.say("Nothing was changed.");
+        ctx.ui
+            .say(tr!(lang, "Nothing was changed.", "Rien n'a été modifié."));
         return Ok(true);
     }
 
     let planned = preview(ctx, |session, env| install::apply(session, &chosen, env));
     if is_empty(&planned) {
-        ctx.ui.say("Everything is already in place.");
+        ctx.ui.say(tr!(
+            lang,
+            "Everything is already in place.",
+            "Tout est déjà en place."
+        ));
         if !dry_run {
             remember(ctx, &names_of(&chosen), &declined)?;
             suggest_handoff(ctx, &chosen)?;
         }
         return Ok(true);
     }
-    show(
-        &mut ctx.ui,
-        &ctx.env.home,
+    let title = tr!(
+        lang,
         "Planned changes (each file is backed up first):",
-        &planned,
+        "Changements prévus (chaque fichier est sauvegardé avant modification) :"
     );
+    show(&mut ctx.ui, &ctx.env.home, &title, &planned);
     if dry_run {
         return Ok(true);
     }
     if !yes {
         if !ctx.ui.interactive {
-            ctx.ui.say(
+            ctx.ui.say(tr!(
+                lang,
                 "No terminal to confirm: nothing was changed. Run 'vario install --yes' to apply.",
-            );
+                "Pas de terminal pour confirmer : rien n'a été modifié. Lancez « vario install --yes » pour appliquer."
+            ));
             return Ok(true);
         }
-        if !ctx.ui.confirm("Apply these changes?", true) {
-            ctx.ui.say("Cancelled.");
+        if !ctx.ui.confirm(
+            &tr!(lang, "Apply these changes?", "Appliquer ces changements ?"),
+            true,
+        ) {
+            cancelled(&mut ctx.ui);
             return Ok(false);
         }
     }
@@ -112,29 +126,43 @@ pub fn install(
 }
 
 pub fn remove(ctx: &mut Context, dry_run: bool, yes: bool) -> Result<bool> {
+    let lang = ctx.ui.lang;
     let all = integrations();
     let planned = preview(ctx, |session, env| install::remove(session, &all, env));
     if is_empty(&planned) {
-        ctx.ui
-            .say("Vario is not installed in any client: nothing to remove.");
+        ctx.ui.say(tr!(
+            lang,
+            "Vario is not installed in any client: nothing to remove.",
+            "Vario n'est installé dans aucun client : rien à retirer."
+        ));
         if !dry_run {
             Choices::delete(&ctx.data_dir)?;
         }
         return Ok(true);
     }
-    show(&mut ctx.ui, &ctx.env.home, "Vario will remove:", &planned);
+    let title = tr!(lang, "Vario will remove:", "Vario va retirer :");
+    show(&mut ctx.ui, &ctx.env.home, &title, &planned);
     if dry_run {
         return Ok(true);
     }
     if !yes {
         if !ctx.ui.interactive {
-            ctx.ui.say(
+            ctx.ui.say(tr!(
+                lang,
                 "No terminal to confirm: nothing was removed. Run 'vario remove --yes' to remove.",
-            );
+                "Pas de terminal pour confirmer : rien n'a été retiré. Lancez « vario remove --yes » pour retirer."
+            ));
             return Ok(false);
         }
-        if !ctx.ui.confirm("Remove Vario from these clients?", false) {
-            ctx.ui.say("Cancelled.");
+        if !ctx.ui.confirm(
+            &tr!(
+                lang,
+                "Remove Vario from these clients?",
+                "Retirer Vario de ces clients ?"
+            ),
+            false,
+        ) {
+            cancelled(&mut ctx.ui);
             return Ok(false);
         }
     }
@@ -169,20 +197,36 @@ impl Row {
         self.chosen || self.declined
     }
 
-    fn notes(&self) -> String {
+    fn notes(&self, lang: Lang) -> String {
         let name = self.integration.name;
         let mut notes = Vec::new();
         if self.chosen && !self.detected {
-            notes.push("client not found".to_string());
+            notes.push(tr!(lang, "client not found", "client introuvable"));
         } else if self.chosen && !self.complete() {
-            notes.push("incomplete: run 'vario doctor --fix'".to_string());
+            notes.push(tr!(
+                lang,
+                "incomplete: run 'vario doctor --fix'",
+                "incomplet : lancez « vario doctor --fix »"
+            ));
         } else if self.declined {
-            notes.push(format!("declined; 'vario install --client {name}' adds it"));
+            notes.push(tr!(
+                lang,
+                "declined; 'vario install --client {name}' adds it",
+                "écarté ; « vario install --client {name} » l'ajoute"
+            ));
         } else if !self.chosen {
-            notes.push("not configured: run 'vario install'".to_string());
+            notes.push(tr!(
+                lang,
+                "not configured: run 'vario install'",
+                "non configuré : lancez « vario install »"
+            ));
         }
         if self.handoff == State::NotConnected {
-            notes.push("connect Handoff: 'handoff doctor --fix'".to_string());
+            notes.push(tr!(
+                lang,
+                "connect Handoff: 'handoff doctor --fix'",
+                "connecter Handoff : « handoff doctor --fix »"
+            ));
         }
         notes.join("; ")
     }
@@ -207,30 +251,31 @@ fn rows(env: &Env, choices: Option<&Choices>) -> Vec<Row> {
 }
 
 pub fn doctor(ctx: &mut Context, fix: bool, dry_run: bool, yes: bool) -> Result<bool> {
+    let lang = ctx.ui.lang;
     let choices = Choices::effective(&ctx.data_dir, &ctx.env);
     let rows = rows(&ctx.env, choices.as_ref());
     if !fix {
         if rows.is_empty() {
-            let supported = labels(&integrations());
-            ctx.ui.say(format!(
-                "No supported AI client was found on this machine (supported: {supported})."
-            ));
+            no_client(&mut ctx.ui);
             return Ok(true);
         }
         report(&mut ctx.ui, &rows);
         if choices.is_none() {
-            ctx.ui.say("Vario is not set up yet: run 'vario install'.");
+            not_set_up(&mut ctx.ui);
         } else if rows.iter().any(|row| {
             (row.chosen && row.detected && !row.complete()) || (row.detected && !row.settled())
         }) {
-            ctx.ui
-                .say("Something is missing: run 'vario doctor --fix' to repair it.");
+            ctx.ui.say(tr!(
+                lang,
+                "Something is missing: run 'vario doctor --fix' to repair it.",
+                "Il manque quelque chose : lancez « vario doctor --fix » pour réparer."
+            ));
         }
         return Ok(true);
     }
 
     let Some(mut choices) = choices else {
-        ctx.ui.say("Vario is not set up yet: run 'vario install'.");
+        not_set_up(&mut ctx.ui);
         return Ok(true);
     };
     let mut targets = Vec::new();
@@ -245,18 +290,22 @@ pub fn doctor(ctx: &mut Context, fix: bool, dry_run: bool, yes: bool) -> Result<
         } else if !row.settled() {
             let label = row.integration.label;
             if ctx.ui.interactive && !yes && !dry_run {
-                if ctx.ui.confirm(
-                    &format!("New AI client found: {label}. Configure it?"),
-                    true,
-                ) {
+                let question = tr!(
+                    lang,
+                    "New AI client found: {label}. Configure it?",
+                    "Nouveau client IA trouvé : {label}. Le configurer ?"
+                );
+                if ctx.ui.confirm(&question, true) {
                     added.push(row.integration.name.to_string());
                     targets.push(row.integration);
                 } else {
                     declined.push(row.integration.name.to_string());
                 }
             } else {
-                ctx.ui.say(format!(
-                    "New AI client found: {label}. Run 'vario doctor --fix' in a terminal to configure it."
+                ctx.ui.say(tr!(
+                    lang,
+                    "New AI client found: {label}. Run 'vario doctor --fix' in a terminal to configure it.",
+                    "Nouveau client IA trouvé : {label}. Lancez « vario doctor --fix » dans un terminal pour le configurer."
                 ));
             }
         }
@@ -268,27 +317,33 @@ pub fn doctor(ctx: &mut Context, fix: bool, dry_run: bool, yes: bool) -> Result<
             choices.decline(&declined);
             choices.save(&ctx.data_dir)?;
         }
-        ctx.ui.say("Everything is in place.");
+        ctx.ui
+            .say(tr!(lang, "Everything is in place.", "Tout est en place."));
         return Ok(true);
     }
-    show(
-        &mut ctx.ui,
-        &ctx.env.home,
+    let title = tr!(
+        lang,
         "Planned repairs (each file is backed up first):",
-        &planned,
+        "Réparations prévues (chaque fichier est sauvegardé avant modification) :"
     );
+    show(&mut ctx.ui, &ctx.env.home, &title, &planned);
     if dry_run {
         return Ok(true);
     }
     if !yes {
         if !ctx.ui.interactive {
-            ctx.ui.say(
+            ctx.ui.say(tr!(
+                lang,
                 "No terminal to confirm: nothing was changed. Run 'vario doctor --fix --yes' to apply.",
-            );
+                "Pas de terminal pour confirmer : rien n'a été modifié. Lancez « vario doctor --fix --yes » pour appliquer."
+            ));
             return Ok(false);
         }
-        if !ctx.ui.confirm("Apply these changes?", true) {
-            ctx.ui.say("Cancelled.");
+        if !ctx.ui.confirm(
+            &tr!(lang, "Apply these changes?", "Appliquer ces changements ?"),
+            true,
+        ) {
+            cancelled(&mut ctx.ui);
             return Ok(false);
         }
     }
@@ -303,15 +358,24 @@ pub fn doctor(ctx: &mut Context, fix: bool, dry_run: bool, yes: bool) -> Result<
 }
 
 pub fn restore(ctx: &mut Context, backup: Option<&str>, list: bool, yes: bool) -> Result<bool> {
+    let lang = ctx.ui.lang;
     let backups = files::backups(&ctx.data_dir);
     if list {
         if backups.is_empty() {
-            ctx.ui.say("No backups yet.");
+            ctx.ui.say(tr!(
+                lang,
+                "No backups yet.",
+                "Aucune sauvegarde pour l'instant."
+            ));
         }
         for folder in backups.iter().rev() {
+            let name = folder_name(folder);
             let count = files::backed_up(folder).map_or(0, |entries| entries.len());
-            ctx.ui
-                .say(format!("{}  ({count} files)", folder_name(folder)));
+            ctx.ui.say(tr!(
+                lang,
+                "{name}  ({count} files)",
+                "{name}  ({count} fichiers)"
+            ));
         }
         return Ok(true);
     }
@@ -322,46 +386,71 @@ pub fn restore(ctx: &mut Context, backup: Option<&str>, list: bool, yes: bool) -
         None => match backups.last() {
             Some(latest) => latest.clone(),
             None => {
-                ctx.ui.say("No backups to restore.");
+                ctx.ui.say(tr!(
+                    lang,
+                    "No backups to restore.",
+                    "Aucune sauvegarde à restaurer."
+                ));
                 return Ok(true);
             }
         },
     };
     if !backups.contains(&folder) && !folder.join("manifest.json").is_file() {
-        ctx.ui.say(format!(
-            "No backup named '{}': see 'vario restore --list'.",
-            backup.unwrap_or_default()
+        let name = backup.unwrap_or_default();
+        ctx.ui.say(tr!(
+            lang,
+            "No backup named '{name}': see 'vario restore --list'.",
+            "Aucune sauvegarde nommée « {name} » : voir « vario restore --list »."
         ));
         return Ok(false);
     }
 
-    ctx.ui.say(format!("Backup {}:", folder_name(&folder)));
+    let name = folder_name(&folder);
+    ctx.ui
+        .say(tr!(lang, "Backup {name}:", "Sauvegarde {name} :"));
     for (path, existed) in files::backed_up(&folder)? {
         let shown = shorten(&path.display().to_string(), &ctx.env.home);
-        if existed {
-            ctx.ui.say(format!("  - put back {shown}"));
+        ctx.ui.say(if existed {
+            tr!(
+                lang,
+                "  - put back {shown}",
+                "  - remise en place de {shown}"
+            )
         } else {
-            ctx.ui.say(format!("  - delete {shown} (created by Vario)"));
-        }
+            tr!(
+                lang,
+                "  - delete {shown} (created by Vario)",
+                "  - suppression de {shown} (créé par Vario)"
+            )
+        });
     }
-    ctx.ui
-        .say("The current content of these files is replaced and not backed up.");
+    ctx.ui.say(tr!(
+        lang,
+        "The current content of these files is replaced and not backed up.",
+        "Le contenu actuel de ces fichiers est remplacé, sans sauvegarde."
+    ));
     if !yes {
         if !ctx.ui.interactive {
-            ctx.ui.say(
+            ctx.ui.say(tr!(
+                lang,
                 "No terminal to confirm: nothing was restored. Run 'vario restore --yes' to restore.",
-            );
+                "Pas de terminal pour confirmer : rien n'a été restauré. Lancez « vario restore --yes » pour restaurer."
+            ));
             return Ok(false);
         }
-        if !ctx.ui.confirm("Restore these files?", false) {
-            ctx.ui.say("Cancelled.");
+        if !ctx.ui.confirm(
+            &tr!(lang, "Restore these files?", "Restaurer ces fichiers ?"),
+            false,
+        ) {
+            cancelled(&mut ctx.ui);
             return Ok(false);
         }
     }
-    let restored = files::restore(&folder)?;
-    ctx.ui.say(format!(
-        "Restored {} files. Run 'vario doctor' to check the result.",
-        restored.len()
+    let count = files::restore(&folder)?.len();
+    ctx.ui.say(tr!(
+        lang,
+        "Restored {count} files. Run 'vario doctor' to check the result.",
+        "{count} fichiers restaurés. Lancez « vario doctor » pour vérifier le résultat."
     ));
     Ok(true)
 }
@@ -375,49 +464,71 @@ fn preview(ctx: &Context, run: impl FnOnce(&mut Session, &Env) -> Vec<Outcome>) 
 fn is_empty(outcomes: &[Outcome]) -> bool {
     outcomes
         .iter()
-        .all(|outcome| outcome.changes.is_empty() && outcome.error.is_none())
+        .all(|outcome| outcome.changes.is_empty() && outcome.ok())
 }
 
 fn succeeded(outcomes: &[Outcome]) -> bool {
-    outcomes.iter().all(|outcome| outcome.error.is_none())
+    outcomes.iter().all(Outcome::ok)
 }
 
-/// Each client's changes and error; clients with neither are left out.
+/// Each client's changes and errors; clients with neither are left out.
 fn show(ui: &mut Ui, home: &Path, title: &str, outcomes: &[Outcome]) {
+    let lang = ui.lang;
     ui.say(title);
     for outcome in outcomes {
-        if outcome.changes.is_empty() && outcome.error.is_none() {
+        if outcome.changes.is_empty() && outcome.ok() {
             continue;
         }
         ui.say(format!("  {}", outcome.label));
         for change in &outcome.changes {
-            ui.say(format!("    - {}", shorten(change, home)));
+            let path = shorten(&change.path.display().to_string(), home);
+            let action = change.action.text(lang);
+            ui.say(tr!(
+                lang,
+                "    - {path}: {action}",
+                "    - {path} : {action}"
+            ));
         }
-        if let Some(error) = &outcome.error {
-            ui.say(format!("    ! {}", shorten(error, home)));
+        for error in &outcome.errors {
+            ui.say(format!("    ! {}", shorten(&error.text(lang), home)));
         }
     }
 }
 
 /// After the plan was shown: a summary, and only what differs from the plan, the errors.
 fn done(ui: &mut Ui, home: &Path, outcomes: &[Outcome], session: &Session) {
+    let lang = ui.lang;
     let count = session.changes().len();
     if succeeded(outcomes) {
-        ui.say(format!("Done: {count} change(s)."));
+        ui.say(tr!(
+            lang,
+            "Done: {count} change(s).",
+            "Terminé : {count} changement(s)."
+        ));
     } else {
-        ui.say(format!("Done with errors: {count} change(s)."));
+        ui.say(tr!(
+            lang,
+            "Done with errors: {count} change(s).",
+            "Terminé avec des erreurs : {count} changement(s)."
+        ));
         for outcome in outcomes {
-            if let Some(error) = &outcome.error {
-                ui.say(format!("  {}: {}", outcome.label, shorten(error, home)));
+            for error in &outcome.errors {
+                ui.say(format!(
+                    "  {}: {}",
+                    outcome.label,
+                    shorten(&error.text(lang), home)
+                ));
             }
         }
     }
     if count > 0 {
-        ui.say(format!(
-            "Backups: {}",
-            shorten(&session.backup_dir().display().to_string(), home)
+        let folder = shorten(&session.backup_dir().display().to_string(), home);
+        ui.say(tr!(lang, "Backups: {folder}", "Sauvegardes : {folder}"));
+        ui.say(tr!(
+            lang,
+            "To undo: vario restore",
+            "Pour annuler : vario restore"
         ));
-        ui.say("To undo: vario restore");
     }
 }
 
@@ -430,6 +541,27 @@ fn shorten(text: &str, home: &Path) -> String {
     text.replace(&home, "~")
 }
 
+fn no_client(ui: &mut Ui) {
+    let supported = labels(&integrations());
+    ui.say(tr!(
+        ui.lang,
+        "No supported AI client was found on this machine (supported: {supported}).",
+        "Aucun client IA compatible n'a été trouvé sur cette machine (compatibles : {supported})."
+    ));
+}
+
+fn not_set_up(ui: &mut Ui) {
+    ui.say(tr!(
+        ui.lang,
+        "Vario is not set up yet: run 'vario install'.",
+        "Vario n'est pas encore configuré : lancez « vario install »."
+    ));
+}
+
+fn cancelled(ui: &mut Ui) {
+    ui.say(tr!(ui.lang, "Cancelled.", "Annulé."));
+}
+
 fn remember(ctx: &Context, chosen: &[String], declined: &[String]) -> Result<()> {
     let mut choices = Choices::load(&ctx.data_dir).unwrap_or_default();
     choices.choose(chosen);
@@ -440,13 +572,16 @@ fn remember(ctx: &Context, chosen: &[String], declined: &[String]) -> Result<()>
 /// Point out Handoff's state for the configured clients; the suggestion to install it
 /// is made only once.
 fn suggest_handoff(ctx: &mut Context, chosen: &[Integration]) -> Result<()> {
+    let lang = ctx.ui.lang;
     let mut absent = false;
     for integration in chosen {
+        let label = integration.label;
         match handoff::state(integration, &ctx.env) {
             State::Connected => {}
-            State::NotConnected => ctx.ui.say(format!(
-                "Handoff is installed but not connected to {}: run 'handoff doctor --fix'.",
-                integration.label
+            State::NotConnected => ctx.ui.say(tr!(
+                lang,
+                "Handoff is installed but not connected to {label}: run 'handoff doctor --fix'.",
+                "Handoff est installé mais pas connecté à {label} : lancez « handoff doctor --fix »."
             )),
             State::Absent => absent = true,
         }
@@ -456,19 +591,22 @@ fn suggest_handoff(ctx: &mut Context, chosen: &[Integration]) -> Result<()> {
         return Ok(());
     }
     ctx.ui.say("");
-    ctx.ui.say(
-        "Tip: Handoff, by the same author, keeps each project's memory when you switch \
-         from one AI agent to another.",
-    );
-    ctx.ui.say(
-        "Install it with 'pipx install ai-handoff' (requires Python 3.10 or later). \
-         This tip is shown only once.",
-    );
+    ctx.ui.say(tr!(
+        lang,
+        "Tip: Handoff, by the same author, keeps each project's memory when you switch from one AI agent to another.",
+        "Conseil : Handoff, du même auteur, garde la mémoire de chaque projet quand vous passez d'un agent IA à un autre."
+    ));
+    ctx.ui.say(tr!(
+        lang,
+        "Install it with 'pipx install ai-handoff' (requires Python 3.10 or later). This tip is shown only once.",
+        "Installez-le avec « pipx install ai-handoff » (Python 3.10 ou plus récent requis). Ce conseil n'est affiché qu'une fois."
+    ));
     choices.handoff_suggested = true;
     choices.save(&ctx.data_dir)
 }
 
 fn report(ui: &mut Ui, rows: &[Row]) {
+    let lang = ui.lang;
     let kinds: Vec<Kind> = [Kind::Subagents, Kind::Instructions, Kind::Hooks, Kind::Mcp]
         .into_iter()
         .filter(|kind| {
@@ -477,8 +615,8 @@ fn report(ui: &mut Ui, rows: &[Row]) {
         })
         .collect();
     let mut header = vec!["Client".to_string()];
-    header.extend(kinds.iter().map(|kind| kind_label(*kind).to_string()));
-    header.extend(["Handoff".to_string(), "Notes".to_string()]);
+    header.extend(kinds.iter().map(|kind| kind_label(*kind, lang)));
+    header.extend(["Handoff".to_string(), tr!(lang, "Notes", "Remarques")]);
     let mut table = vec![header];
     for row in rows {
         let mut cells = vec![row.integration.label.to_string()];
@@ -490,15 +628,12 @@ fn report(ui: &mut Ui, rows: &[Row]) {
             }
             .to_string()
         }));
-        cells.push(
-            match row.handoff {
-                State::Connected => "connected",
-                State::NotConnected => "not connected",
-                State::Absent => "not installed",
-            }
-            .to_string(),
-        );
-        cells.push(row.notes());
+        cells.push(match row.handoff {
+            State::Connected => tr!(lang, "connected", "connecté"),
+            State::NotConnected => tr!(lang, "not connected", "non connecté"),
+            State::Absent => tr!(lang, "not installed", "non installé"),
+        });
+        cells.push(row.notes(lang));
         table.push(cells);
     }
     let widths: Vec<usize> = (0..table[0].len())
@@ -523,12 +658,12 @@ fn report(ui: &mut Ui, rows: &[Row]) {
     }
 }
 
-fn kind_label(kind: Kind) -> &'static str {
+fn kind_label(kind: Kind, lang: Lang) -> String {
     match kind {
-        Kind::Subagents => "Sub-agents",
-        Kind::Instructions => "Instructions",
-        Kind::Hooks => "Hooks",
-        Kind::Mcp => "MCP",
+        Kind::Subagents => tr!(lang, "Sub-agents", "Sous-agents"),
+        Kind::Instructions => tr!(lang, "Instructions", "Consignes"),
+        Kind::Hooks => "Hooks".to_string(),
+        Kind::Mcp => "MCP".to_string(),
     }
 }
 
@@ -555,7 +690,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::ui::testing::{Captured, scripted};
+    use crate::ui::testing::{Captured, scripted, scripted_in};
 
     /// A home where Claude Code is installed, with the user's own `CLAUDE.md`.
     struct Fixture {
@@ -583,7 +718,10 @@ mod tests {
         }
 
         fn ctx(&self, answers: &str, interactive: bool) -> (Context, Captured) {
-            let (ui, out) = scripted(answers, interactive);
+            self.with_ui(scripted(answers, interactive))
+        }
+
+        fn with_ui(&self, (ui, out): (Ui, Captured)) -> (Context, Captured) {
             let ctx = Context {
                 env: self.env.clone(),
                 data_dir: self.data_dir.clone(),
@@ -608,7 +746,10 @@ mod tests {
         assert!(install(&mut ctx, false, &[], false, false).unwrap());
         let text = out.text();
         assert!(text.contains("AI clients found: Claude Code"), "{text}");
-        assert!(text.contains("vario-reader.md: written"), "{text}");
+        assert!(
+            text.contains("- ~/.claude/agents/vario-reader.md: written"),
+            "{text}"
+        );
         assert!(text.contains("nothing was changed"), "{text}");
         assert_eq!(fx.rules(), USER_RULES);
         assert!(!fx.data_dir.exists(), "no backup and no setup.json");
@@ -657,6 +798,7 @@ mod tests {
         assert!(install(&mut ctx, false, &[], false, false).unwrap());
         let text = out.text();
         assert!(text.contains("Apply these changes? [Y/n]"), "{text}");
+        assert!(text.contains("Done: 3 change(s)."), "{text}");
         assert!(text.contains("Backups: "), "{text}");
         assert!(fx.claude("agents/vario-worker.md").is_file());
         assert_eq!(Choices::load(&fx.data_dir).unwrap().clients, ["claude"]);
@@ -699,6 +841,25 @@ mod tests {
     }
 
     #[test]
+    fn a_foreign_file_is_reported_as_an_error() {
+        let fx = Fixture::new();
+        fs::create_dir_all(fx.claude("agents")).unwrap();
+        fs::write(fx.claude("agents/vario-reader.md"), "mine").unwrap();
+        let (mut ctx, out) = fx.ctx("", false);
+        assert!(!install(&mut ctx, false, &[], false, true).unwrap());
+        let text = out.text();
+        assert!(
+            text.contains("! ~/.claude/agents/vario-reader.md is not managed by Vario"),
+            "{text}"
+        );
+        assert!(text.contains("Done with errors"), "{text}");
+        assert_eq!(
+            fs::read_to_string(fx.claude("agents/vario-reader.md")).unwrap(),
+            "mine"
+        );
+    }
+
+    #[test]
     fn restore_puts_back_the_latest_backup() {
         let fx = Fixture::new();
         let (mut ctx, _) = fx.ctx("", false);
@@ -715,7 +876,7 @@ mod tests {
             "defaults to no"
         );
         let text = out.text();
-        assert!(text.contains("put back "), "{text}");
+        assert!(text.contains("put back ~/.claude/CLAUDE.md"), "{text}");
         assert!(
             text.contains("vario-reader.md (created by Vario)"),
             "{text}"
@@ -742,6 +903,30 @@ mod tests {
         let text = out.text();
         assert!(text.contains("Everything is already in place."), "{text}");
         assert!(!text.contains("pipx install ai-handoff"), "{text}");
+    }
+
+    #[test]
+    fn in_french() {
+        let fx = Fixture::new();
+        let (mut ctx, out) = fx.with_ui(scripted_in(Lang::Fr, "oui\n", true));
+        assert!(install(&mut ctx, false, &[], false, false).unwrap());
+        let text = out.text();
+        assert!(text.contains("Clients IA trouvés : Claude Code"), "{text}");
+        assert!(
+            text.contains("- ~/.claude/agents/vario-reader.md : écriture"),
+            "{text}"
+        );
+        assert!(text.contains("Appliquer ces changements ? [O/n]"), "{text}");
+        assert!(text.contains("Terminé : 3 changement(s)."), "{text}");
+
+        let (mut ctx, out) = fx.with_ui(scripted_in(Lang::Fr, "", false));
+        doctor(&mut ctx, false, false, false).unwrap();
+        let text = out.text();
+        assert!(
+            text.contains("Client       Sous-agents  Consignes  Handoff       Remarques"),
+            "{text}"
+        );
+        assert!(text.contains("non installé"), "{text}");
     }
 
     #[test]

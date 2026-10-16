@@ -2,7 +2,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 
+use vario_core::Error;
 use vario_core::clients::{Env, by_name, subagents};
+use vario_core::error::Reason;
 use vario_core::files::{BLOCK_BEGIN, Session, restore};
 use vario_core::handoff::{self, State};
 use vario_core::install;
@@ -62,7 +64,7 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
     let claude = vec![by_name("claude").unwrap()];
 
     let outcomes = install::apply(&mut session(dir.path()), &claude, &env);
-    assert_eq!(outcomes[0].error, None);
+    assert!(outcomes[0].ok());
     assert_eq!(outcomes[0].changes.len(), 3);
 
     let reader = fs::read_to_string(config.join("agents").join("vario-reader.md")).unwrap();
@@ -87,7 +89,7 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
     );
 
     let removed = install::remove(&mut session(dir.path()), &claude, &env);
-    assert_eq!(removed[0].error, None);
+    assert!(removed[0].ok());
     assert_eq!(
         fs::read_to_string(config.join("CLAUDE.md")).unwrap(),
         user_rules
@@ -128,13 +130,13 @@ fn a_users_own_agent_with_the_same_name_is_kept() {
         &[by_name("claude").unwrap()],
         &env,
     );
-    assert!(
-        outcomes[0]
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("not managed by Vario")
-    );
+    assert!(matches!(
+        outcomes[0].errors[..],
+        [Error::Config {
+            reason: Reason::Foreign,
+            ..
+        }]
+    ));
     assert_eq!(
         fs::read_to_string(agents.join("vario-reader.md")).unwrap(),
         "mine"
