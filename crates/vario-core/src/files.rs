@@ -245,6 +245,27 @@ pub fn dump_json(data: &Map<String, Value>) -> String {
     json + "\n"
 }
 
+/// Read a text file; a missing file is an empty text.
+pub fn read_text(path: &Path) -> Result<String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(String::new()),
+        Err(err) if err.kind() == ErrorKind::InvalidData => {
+            Err(Error::config(path, "is not UTF-8 text"))
+        }
+        Err(err) => Err(io(path)(err)),
+    }
+}
+
+/// The object at `data[k1][k2]...`; `None` if absent or not an object.
+pub fn nested<'a>(data: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a Map<String, Value>> {
+    let mut current = data;
+    for &key in keys {
+        current = current.get(key)?.as_object()?;
+    }
+    Some(current)
+}
+
 /// The object at `data[k1][k2]...`, created when asked; `None` if absent or not an object.
 pub fn nested_mut<'a>(
     data: &'a mut Map<String, Value>,
