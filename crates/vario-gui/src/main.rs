@@ -17,6 +17,8 @@ use vario_core::overview::{self, Note};
 use vario_core::parts::Kind;
 use vario_core::{paths, report, tr};
 
+mod gauge;
+
 slint::include_modules!();
 
 /// What the window works on.
@@ -26,12 +28,33 @@ struct App {
     lang: Lang,
     /// The clients found on this machine, with whether each is ticked for install.
     candidates: Vec<(&'static str, bool)>,
+    /// The floating gauge, created the first time it is opened.
+    gauge: Option<GaugeWindow>,
 }
 
 fn main() -> Result<(), slint::PlatformError> {
     let mut env = Env::current();
     env.exe = command_line_path(&env);
     let lang = Lang::detect(&env);
+    // `vario-gui --gauge`: the floating gauge alone, as a desktop widget.
+    if std::env::args().any(|arg| arg == "--gauge") {
+        let gauge = open_gauge(env.clone(), paths::data_dir(), lang)?;
+        gauge.on_close(|| {
+            let _ = slint::quit_event_loop();
+        });
+        let main_window: Rc<RefCell<Option<MainWindow>>> = Rc::default();
+        gauge.on_open_main(move || {
+            let mut main_window = main_window.borrow_mut();
+            if main_window.is_none() {
+                *main_window = open(env.clone(), paths::data_dir(), lang).ok();
+            }
+            if let Some((window, _)) = main_window.as_ref() {
+                let _ = window.show();
+            }
+        });
+        gauge.show()?;
+        return slint::run_event_loop();
+    }
     let (window, _app) = open(env, paths::data_dir(), lang)?;
     // Opens on another tab, for screenshots: VARIO_GUI_TAB=0..3.
     if let Some(tab) = std::env::var("VARIO_GUI_TAB")
@@ -60,6 +83,7 @@ fn open(
         data_dir,
         lang,
         candidates: Vec::new(),
+        gauge: None,
     }));
     app.borrow_mut().reset_candidates();
     app.borrow().refresh(&window);
@@ -74,6 +98,7 @@ fn open(
         }
     };
     window.on_refresh(on(|app, window| app.refresh(window)));
+    window.on_open_gauge(on(|app, _| app.show_gauge()));
     window.on_repair(on(App::repair));
     window.on_remove_all(on(App::remove_all));
     window.on_preview(on(App::preview));
@@ -101,6 +126,24 @@ fn open(
     Ok((window, app))
 }
 
+/// The main window and the state behind it.
+type MainWindow = (AppWindow, Rc<RefCell<App>>);
+
+/// The floating gauge, fed from a background thread.
+fn open_gauge(
+    env: Env,
+    data_dir: PathBuf,
+    lang: Lang,
+) -> Result<GaugeWindow, slint::PlatformError> {
+    let gauge = GaugeWindow::new()?;
+    if lang == Lang::Fr {
+        let _ = slint::select_bundled_translation("fr");
+    }
+    gauge::Reading::read(&data_dir, lang, None, vario_core::quota::now()).show(&gauge);
+    gauge::feed(&gauge, env, data_dir, lang);
+    Ok(gauge)
+}
+
 /// Hooks must run the `vario` command, not this interface: the one the installed hooks
 /// already run, so the interface and the command line agree; else the one installed
 /// next to the interface (inside Vario.app); else the one on `PATH`; else plain `vario`.
@@ -118,6 +161,25 @@ fn command_line_path(env: &Env) -> PathBuf {
 }
 
 impl App {
+    /// Open the floating gauge beside the main window; closing it only hides it.
+    fn show_gauge(&mut self) {
+        if self.gauge.is_none() {
+            let Ok(gauge) = open_gauge(self.env.clone(), self.data_dir.clone(), self.lang) else {
+                return;
+            };
+            let weak = gauge.as_weak();
+            gauge.on_close(move || {
+                if let Some(gauge) = weak.upgrade() {
+                    let _ = gauge.hide();
+                }
+            });
+            self.gauge = Some(gauge);
+        }
+        if let Some(gauge) = &self.gauge {
+            let _ = gauge.show();
+        }
+    }
+
     /// Tick every client found; in manual mode the user unticks the ones to leave out.
     fn reset_candidates(&mut self) {
         self.candidates = install::detected(&self.env)
@@ -697,7 +759,10 @@ mod tests {
     #[test]
     fn every_interface_text_is_translated_to_french() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let slint = fs::read_to_string(root.join("ui").join("app.slint")).unwrap();
+        let slint: String = ["app.slint", "gauge.slint"]
+            .iter()
+            .map(|file| fs::read_to_string(root.join("ui").join(file)).unwrap())
+            .collect();
         let po = fs::read_to_string(
             root.join("lang")
                 .join("fr")

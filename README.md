@@ -32,6 +32,10 @@ The hooks note every delegation to Vario's sub-agents in a local journal; `vario
 
 **Quota and thermostat (Claude Code).** Claude Code tells only the status line how much of your subscription you have used. Vario's status line saves it, and shows `Vario · 5h 23% · 7d 41%`; if you already have a status line, Vario wraps it instead: your line looks exactly the same. Before each prompt, the thermostat looks at the most used window: from 50 % it asks the main session to delegate more, from 80 % it also warns you, and at 100 % it suggests switching agents after saving a [Handoff](https://github.com/kdev1966/Handoff-CLI). `vario usage` shows the quota, the tokens per model (main session and sub-agents) over 5 hours and 7 days, the share of work delegated, and the MCP servers you connect but never use.
 
+Claude Code runs status lines in the terminal only: the quota is read while you use Claude Code in a terminal, not from the VS Code extension. The rest (sub-agents, guidance, journal, `vario usage`) works everywhere.
+
+**Floating gauge.** `vario-gui --gauge`, or **Floating gauge** in the application, opens a small always-on-top window drawn like an audio plugin: a needle meter for the 5-hour quota, a bar meter for the 7-day quota, the thermostat's state as mode buttons, and knobs for the share delegated and the escalation rate. Drag it by its header.
+
 ## Install
 
 **Prebuilt**, from the [Releases](https://github.com/kdev1966/vario/releases) page:
