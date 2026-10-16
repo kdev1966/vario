@@ -259,6 +259,13 @@ fn without_vario(value: &serde_json::Value) -> serde_json::Value {
         ),
         Value::Object(map) => Value::Object(
             map.iter()
+                // Vario's status line, installed where the user had none.
+                .filter(|(key, value)| {
+                    *key != "statusLine"
+                        || !value["command"]
+                            .as_str()
+                            .is_some_and(|command| command.contains("vario statusline"))
+                })
                 .map(|(key, value)| (key.clone(), without_vario(value)))
                 .filter(|(_, value)| value.as_array().is_none_or(|items| !items.is_empty()))
                 .collect(),

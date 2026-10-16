@@ -8,6 +8,7 @@ export struct ClientRow {
     subagents: string,
     instructions: string,
     hooks: string,
+    quota: string,
     handoff: string,
     notes: string,
 }
@@ -44,6 +45,7 @@ component ClientTable {
             Header { width: 90px; text: @tr("Sub-agents"); }
             Header { width: 90px; text: @tr("Instructions"); }
             Header { width: 60px; text: @tr("Hooks"); }
+            Header { width: 60px; text: @tr("Quota"); }
             Header { width: 110px; text: "Handoff"; }
             Header { text: @tr("Notes"); }
         }
@@ -53,6 +55,7 @@ component ClientTable {
             Cell { width: 90px; text: row.subagents; }
             Cell { width: 90px; text: row.instructions; }
             Cell { width: 60px; text: row.hooks; }
+            Cell { width: 60px; text: row.quota; }
             Cell { width: 110px; text: row.handoff; }
             Cell { text: row.notes; wrap: word-wrap; overflow: clip; }
         }

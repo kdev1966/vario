@@ -12,6 +12,9 @@ pub mod lang;
 pub mod overview;
 pub mod parts;
 pub mod paths;
+pub mod quota;
 pub mod report;
+pub mod statusline;
+pub mod usage;
 
 pub use error::{Error, Result};

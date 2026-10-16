@@ -66,7 +66,11 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
 
     let outcomes = install::apply(&mut session(dir.path()), &claude, &env);
     assert!(outcomes[0].ok());
-    assert_eq!(outcomes[0].changes.len(), 4);
+    assert_eq!(
+        outcomes[0].changes.len(),
+        5,
+        "two agents, CLAUDE.md, then settings.json for the hooks and the status line"
+    );
 
     let reader = fs::read_to_string(config.join("agents").join("vario-reader.md")).unwrap();
     assert!(reader.starts_with("---\nname: vario-reader\ndescription: \"Use proactively"));
@@ -81,14 +85,26 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
         serde_json::from_str(&fs::read_to_string(config.join("settings.json")).unwrap()).unwrap();
     assert_eq!(
         settings,
-        serde_json::json!({"hooks": {"SubagentStop": [{
-            "matcher": "^(vario-reader|vario-worker)$",
-            "hooks": [{
-                "type": "command",
-                "command": "vario hook subagent-stop --via claude",
-                "timeout": 10,
-            }],
-        }]}})
+        serde_json::json!({
+            "hooks": {
+                "SubagentStop": [{
+                    "matcher": "^(vario-reader|vario-worker)$",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "vario hook subagent-stop --via claude",
+                        "timeout": 10,
+                    }],
+                }],
+                "UserPromptSubmit": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "vario hook prompt-submit --via claude",
+                        "timeout": 5,
+                    }],
+                }],
+            },
+            "statusLine": {"type": "command", "command": "vario statusline"},
+        })
     );
 
     let status = install::status(&claude[0], &env);
@@ -97,7 +113,8 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
         [
             (Kind::Subagents, true),
             (Kind::Instructions, true),
-            (Kind::Hooks, true)
+            (Kind::Hooks, true),
+            (Kind::Quota, true)
         ]
     );
 
@@ -123,8 +140,49 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
         [
             (Kind::Subagents, false),
             (Kind::Instructions, false),
-            (Kind::Hooks, false)
+            (Kind::Hooks, false),
+            (Kind::Quota, false)
         ]
+    );
+}
+
+#[test]
+fn an_existing_status_line_is_wrapped_and_put_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = fake_env(dir.path());
+    let config = env.home.join(".claude");
+    fs::create_dir_all(&config).unwrap();
+    let original = r#"{
+  "statusLine": {
+    "type": "command",
+    "command": "npx -y paceline \"$HOME\"",
+    "padding": 0
+  }
+}
+"#;
+    fs::write(config.join("settings.json"), original).unwrap();
+    let claude = vec![by_name("claude").unwrap()];
+
+    install::apply(&mut session(dir.path()), &claude, &env);
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(config.join("settings.json")).unwrap()).unwrap();
+    let line = &settings["statusLine"];
+    let command = line["command"].as_str().unwrap();
+    assert!(command.starts_with("vario statusline --then "), "{command}");
+    assert_eq!(
+        vario_core::parts::wrapped_status_line(command).as_deref(),
+        Some("npx -y paceline \"$HOME\"")
+    );
+    assert_eq!(line["padding"], 0, "the user's other fields are kept");
+
+    let again = install::apply(&mut session(dir.path()), &claude, &env);
+    assert!(again[0].changes.is_empty(), "wrapping is not repeated");
+
+    install::remove(&mut session(dir.path()), &claude, &env);
+    assert_eq!(
+        fs::read_to_string(config.join("settings.json")).unwrap(),
+        original,
+        "the user's status line is back, byte for byte"
     );
 }
 

@@ -4797,6 +4797,7 @@ dependencies = [
 name = "vario"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "tempfile",
  "vario-core",

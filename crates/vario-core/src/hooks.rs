@@ -13,7 +13,10 @@ use serde_json::{Map, Value, json};
 use crate::clients::subagents::{self, SESSION_CONTEXT};
 use crate::clients::{Env, by_name};
 use crate::install;
+use crate::lang::Lang;
 use crate::parts::Kind;
+use crate::quota::{self, Level, Quota};
+use crate::tr;
 
 /// One JSON line per delegation to a Vario sub-agent.
 pub const JOURNAL: &str = "delegations.jsonl";
@@ -27,6 +30,8 @@ const FIELD_LIMIT: usize = 300;
 pub enum Event {
     SessionStart,
     SubagentStop,
+    /// Before each prompt: the thermostat's advice, from the quota.
+    PromptSubmit,
 }
 
 impl Event {
@@ -34,6 +39,7 @@ impl Event {
         match name {
             "session-start" => Some(Event::SessionStart),
             "subagent-stop" => Some(Event::SubagentStop),
+            "prompt-submit" => Some(Event::PromptSubmit),
             _ => None,
         }
     }
@@ -97,6 +103,9 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
             })
             .to_string(),
         },
+        // The quota is Claude Code's subscription; inside Cursor it says nothing.
+        Event::PromptSubmit if in_cursor => quiet(via),
+        Event::PromptSubmit => thermostat(env, data_dir).unwrap_or_else(|| quiet(via)),
         Event::SubagentStop => {
             let client = if in_cursor { "cursor" } else { via.name() };
             if let Err(err) = record(&input, client, &env.home, data_dir) {
@@ -105,6 +114,63 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
             quiet(via)
         }
     }
+}
+
+/// The thermostat's advice for this prompt, in Claude Code's `UserPromptSubmit`
+/// output: guidance for the model, and above the alert threshold a message for the
+/// user. `None` under the first threshold or without a current quota.
+fn thermostat(env: &Env, data_dir: &Path) -> Option<String> {
+    let now = quota::now();
+    let quota = Quota::load(data_dir)?;
+    let window = quota.highest(now)?;
+    let used = window.used_percentage.round();
+    let left = quota::time_left(window.resets_at, now);
+    let lang = Lang::detect(env);
+    let (context, message) = match quota.level(now) {
+        Level::Normal => return None,
+        Level::Reinforced => (
+            format!(
+                "Vario: the subscription quota is at {used}%. Delegate all reading and \
+                 summarizing to vario-reader and every bounded task with a check to \
+                 vario-worker; keep only decisions and review in this session."
+            ),
+            None,
+        ),
+        Level::Alert => (
+            format!(
+                "Vario: the subscription quota is at {used}%, resetting in {left}. Delegate \
+                 everything an economical sub-agent can do and avoid costly exploration in \
+                 this session."
+            ),
+            Some(tr!(
+                lang,
+                "Vario: quota at {used}%, resets in {left}. Delegation is reinforced.",
+                "Vario : quota à {used} %, remise à zéro dans {left}. Délégation renforcée."
+            )),
+        ),
+        Level::Limit => (
+            format!(
+                "Vario: the subscription quota is used up; it resets in {left}. Tell the user \
+                 they can switch to another agent, and save a handoff first (Handoff's \
+                 memory_save) so the next agent can continue."
+            ),
+            Some(tr!(
+                lang,
+                "Vario: quota used up, resets in {left}. Consider switching agents; save a handoff first.",
+                "Vario : quota épuisé, remise à zéro dans {left}. Pensez à changer d'agent, après avoir enregistré une passation."
+            )),
+        ),
+    };
+    let mut output = json!({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": context,
+        }
+    });
+    if let Some(message) = message {
+        output["systemMessage"] = Value::from(message);
+    }
+    Some(output.to_string())
 }
 
 /// An output that changes nothing: Cursor expects JSON, the others accept nothing.
@@ -281,7 +347,7 @@ fn append(path: &Path, line: &str) -> Result<(), String> {
 }
 
 /// Note a failure where the user can find it, without ever failing the hook.
-fn log(data_dir: &Path, message: &str) {
+pub(crate) fn log(data_dir: &Path, message: &str) {
     let path = data_dir.join(LOG);
     if fs::metadata(&path).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
         let _ = fs::remove_file(&path);
