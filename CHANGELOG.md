@@ -1,0 +1,45 @@
+# Changelog
+
+All notable changes to Vario are listed here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
+[Semantic Versioning](https://semver.org/).
+
+## [0.2.0] - 2026-10-16
+
+### Added
+
+- `vario usage`: the tokens used per model, in the main session and in sub-agents, over
+  5 hours and 7 days, the share of work delegated, and the MCP servers you connect but
+  never use, read from Claude Code's local logs.
+- The subscription quota: Vario's status line saves the 5-hour and 7-day limits Claude
+  Code passes it. A status line you already have is wrapped, never replaced: it looks
+  the same, and removing Vario puts it back.
+- The quota thermostat: from 50 % of the most used window the session is asked to
+  delegate more, from 80 % you are warned, and at 100 % Vario suggests switching agents
+  after saving a Handoff.
+- The floating gauge (`vario-gui --gauge`, or **Floating gauge** in the application): a
+  slim, dark, borderless window drawn like an audio plugin, above other applications and
+  on every desktop, with a needle meter, lit segments, thermostat lamps and knobs.
+- Codex, Gemini CLI and VS Code (Copilot) support: sub-agents, delegation guidance, and
+  a sub-agent journal hook for Codex and VS Code.
+- A **Quota** column in `vario doctor` and the application.
+
+### Changed
+
+- The status line is used only when it is free, and wrapped otherwise.
+
+### Known limits
+
+- The quota is read only while Claude Code runs in a terminal: the VS Code extension
+  runs no status line.
+- Sub-agents' logs can keep only the start of an answer's output count; Vario then
+  estimates it from the answer's length, and says so.
+
+## [0.1.0] - 2026-10-16
+
+First release: `vario` (install, remove, doctor, restore, report) and `vario-gui` for
+Claude Code, Cursor and OpenCode, with economical sub-agents, delegation guidance, a
+local delegation journal, French and English, and `Vario.app` for macOS.
+
+[0.2.0]: https://github.com/kdev1966/vario/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/kdev1966/vario/releases/tag/v0.1.0
