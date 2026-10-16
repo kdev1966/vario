@@ -136,6 +136,24 @@ pub fn float(gauge: &GaugeWindow) {
     });
 }
 
+/// On macOS, show the Dock icon (and a place in the app switcher) while the main
+/// window is open; without it, the gauge stays a desktop widget.
+pub fn show_in_dock(show: bool) {
+    #[cfg(target_os = "macos")]
+    macos::show_in_dock(show);
+    #[cfg(not(target_os = "macos"))]
+    let _ = show;
+}
+
+/// Bring the window forward with the focus, also when the gauge started Vario as a
+/// background widget.
+pub fn bring_to_front(window: &slint::Window) {
+    use slint::winit_030::WinitWindowAccessor;
+    #[cfg(target_os = "macos")]
+    macos::activate();
+    window.with_winit_window(|window| window.focus_window());
+}
+
 /// Run as a desktop widget: on macOS, no Dock icon and no place in the app switcher.
 /// Must run before any window is created.
 pub fn select_widget_backend() -> Result<(), slint::PlatformError> {
@@ -157,9 +175,32 @@ pub fn select_widget_backend() -> Result<(), slint::PlatformError> {
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)] // one pointer cast, see below; the crate otherwise denies unsafe
 mod macos {
-    use objc2_app_kit::{NSView, NSWindowCollectionBehavior};
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationPolicy, NSView, NSWindowCollectionBehavior,
+    };
     use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use slint::winit_030::winit::window::Window;
+
+    pub fn show_in_dock(show: bool) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let policy = if show {
+            NSApplicationActivationPolicy::Regular
+        } else {
+            NSApplicationActivationPolicy::Accessory
+        };
+        NSApplication::sharedApplication(mtm).setActivationPolicy(policy);
+    }
+
+    /// `activate` replaces it from macOS 14 only; Vario runs on earlier versions too.
+    #[allow(deprecated)]
+    pub fn activate() {
+        if let Some(mtm) = MainThreadMarker::new() {
+            NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+        }
+    }
 
     /// NSWindow.collectionBehavior: shown on every Space and over full-screen apps.
     pub fn join_every_space(window: &Window) {

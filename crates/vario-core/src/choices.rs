@@ -23,6 +23,8 @@ pub struct Choices {
     pub declined: Vec<String>,
     /// Vario has already suggested installing Handoff; it does not suggest it again.
     pub handoff_suggested: bool,
+    /// The floating gauge opens only when asked, not with each agent's session.
+    pub gauge_on_demand: bool,
 }
 
 pub fn path(data_dir: &Path) -> PathBuf {
@@ -87,6 +89,19 @@ impl Choices {
         choices.save(data_dir)
     }
 
+    /// Whether the gauge opens with each agent's session; it does unless the user
+    /// turned that off.
+    pub fn gauge_with_sessions(data_dir: &Path) -> bool {
+        Choices::load(data_dir).is_none_or(|choices| !choices.gauge_on_demand)
+    }
+
+    /// Turn the opening of the gauge with each session on or off.
+    pub fn set_gauge_with_sessions(data_dir: &Path, on: bool) -> Result<()> {
+        let mut choices = Choices::load(data_dir).unwrap_or_default();
+        choices.gauge_on_demand = !on;
+        choices.save(data_dir)
+    }
+
     pub fn save(&self, data_dir: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(self).expect("choices always serialize");
         files::atomic_write(&path(data_dir), &(json + "\n"))
@@ -131,6 +146,16 @@ mod tests {
         fs::write(path(dir.path()), r#"{"clients": ["claude"]}"#).unwrap();
         let old = Choices::load(dir.path()).unwrap();
         assert!(old.declined.is_empty() && !old.handoff_suggested);
+
+        assert!(Choices::gauge_with_sessions(dir.path()));
+        Choices::set_gauge_with_sessions(dir.path(), false).unwrap();
+        assert!(!Choices::gauge_with_sessions(dir.path()));
+        assert_eq!(
+            Choices::load(dir.path()).unwrap().clients,
+            names(&["claude"])
+        );
+        Choices::set_gauge_with_sessions(dir.path(), true).unwrap();
+        assert!(Choices::gauge_with_sessions(dir.path()));
 
         fs::write(path(dir.path()), "not json").unwrap();
         assert_eq!(Choices::load(dir.path()), None);

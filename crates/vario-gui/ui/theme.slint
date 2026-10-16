@@ -1,0 +1,247 @@
+// The look shared by the gauge and the main window: a dark front panel, like an audio
+// plugin's. Everything is drawn as vectors, so it stays sharp at any resolution.
+
+export global Theme {
+    out property <color> panel-top: #1e1f25;
+    out property <color> panel-bottom: #121317;
+    out property <color> plate: #17181d;
+    out property <color> edge: #2d2f38;
+    out property <color> text: #e9eaef;
+    out property <color> muted: #8a8d99;
+    out property <color> amber: #e3a23b;
+    out property <color> red: #e2553f;
+    out property <color> green: #47c08a;
+    out property <color> unlit: #25262e;
+    out property <color> key: #23242b;
+    out property <color> key-hover: #2c2d36;
+}
+
+// Small capital labels, as engraved on a front panel.
+export component Caption inherits Text {
+    color: Theme.muted;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    horizontal-alignment: center;
+    // Room above capitals: Slint cuts a text at its own height (É, À).
+    height: 12px;
+    vertical-alignment: bottom;
+}
+
+// A recessed plate grouping one instrument.
+export component Plate inherits Rectangle {
+    border-radius: 7px;
+    background: Theme.plate;
+    border-width: 1px;
+    border-color: Theme.edge;
+}
+
+// The front panel itself, with the window drawn clear around its rounded corners.
+export component Panel inherits Rectangle {
+    border-radius: 14px;
+    background: @linear-gradient(180deg, Theme.panel-top 0%, Theme.panel-bottom 100%);
+    border-width: 1px;
+    border-color: Theme.edge;
+}
+
+// The name, in the brand's italic amber.
+export component Logo inherits Text {
+    text: "Vario";
+    color: Theme.amber;
+    font-size: 17px;
+    font-weight: 800;
+    font-italic: true;
+}
+
+// The round close button of the panels.
+export component CloseButton inherits Rectangle {
+    callback clicked();
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    background: area.has-hover ? Theme.red : #2a2b33;
+    Text {
+        text: "×";
+        color: Theme.text;
+        font-size: 11px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    area := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// A lamp: lit in its colour, with a glow; unlit when off.
+export component Lamp inherits Rectangle {
+    in property <bool> lit;
+    in property <color> tint: Theme.green;
+    width: 9px;
+    height: 9px;
+    border-radius: self.width / 2;
+    background: root.lit ? root.tint : Theme.unlit;
+    drop-shadow-blur: root.lit ? 6px : 0;
+    drop-shadow-color: root.tint;
+}
+
+// A hardware key: a dark button with an engraved label.
+export component Key inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    // The key that goes forward: amber label and edge.
+    in property <bool> primary;
+    callback clicked();
+    height: 26px;
+    min-width: label.preferred-width + 24px;
+    border-radius: 5px;
+    background: !root.enabled ? Theme.plate
+        : area.pressed ? Theme.plate
+        : area.has-hover ? Theme.key-hover
+        : Theme.key;
+    border-width: 1px;
+    border-color: root.primary && root.enabled ? Theme.amber : Theme.edge;
+    label := Text {
+        text: root.text;
+        color: !root.enabled ? Theme.unlit.brighter(0.8)
+            : root.primary ? Theme.amber
+            : Theme.text;
+        font-size: 11px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+// An on/off switch, amber when on, with its label on the right.
+export component Toggle {
+    in property <string> text;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled();
+    min-height: 20px;
+    HorizontalLayout {
+        spacing: 9px;
+        alignment: start;
+        Rectangle {
+            width: 30px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            background: root.checked && root.enabled ? Theme.amber.darker(0.35) : Theme.unlit;
+            border-width: 1px;
+            border-color: root.checked && root.enabled ? Theme.amber : Theme.edge;
+            Rectangle {
+                x: root.checked ? parent.width - self.width - 2px : 2px;
+                y: 2px;
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                background: root.enabled ? Theme.text : Theme.muted;
+                animate x { duration: 120ms; easing: ease-out; }
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.enabled ? Theme.text : Theme.muted;
+            font-size: 11px;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+}
+
+// A small knob: an amber arc over 270 degrees, the value inside, the caption below.
+export component Knob {
+    in property <float> value;
+    in property <string> caption;
+    in property <string> shown;
+    property <float> r: 22;
+    property <angle> start: -135deg;
+    property <angle> end: -135deg + 270deg * clamp(root.value, 0, 100) / 100;
+    width: 60px;
+    height: 74px;
+
+    // Track, then value.
+    Path {
+        x: 0;
+        y: 0;
+        width: 60px;
+        height: 60px;
+        viewbox-width: 60;
+        viewbox-height: 60;
+        stroke: Theme.unlit;
+        stroke-width: 4px;
+        MoveTo {
+            x: 30 + root.r * sin(root.start);
+            y: 30 - root.r * cos(root.start);
+        }
+        ArcTo {
+            x: 30 + root.r * sin(135deg);
+            y: 30 - root.r * cos(135deg);
+            radius-x: root.r;
+            radius-y: root.r;
+            sweep: true;
+            large-arc: true;
+        }
+    }
+    if root.value > 0.5: Path {
+        x: 0;
+        y: 0;
+        width: 60px;
+        height: 60px;
+        viewbox-width: 60;
+        viewbox-height: 60;
+        stroke: Theme.amber;
+        stroke-width: 4px;
+        MoveTo {
+            x: 30 + root.r * sin(root.start);
+            y: 30 - root.r * cos(root.start);
+        }
+        ArcTo {
+            x: 30 + root.r * sin(root.end);
+            y: 30 - root.r * cos(root.end);
+            radius-x: root.r;
+            radius-y: root.r;
+            sweep: true;
+            large-arc: root.end - root.start > 180deg;
+        }
+    }
+    // The cap, lit from above.
+    Rectangle {
+        x: 13px;
+        y: 13px;
+        width: 34px;
+        height: 34px;
+        border-radius: 17px;
+        background: @radial-gradient(circle, #3a3c46 0%, #24252c 70%, #1b1c22 100%);
+        border-width: 1px;
+        border-color: #0d0e11;
+        Text {
+            text: root.shown;
+            color: Theme.text;
+            font-size: 10px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    Caption {
+        x: 0;
+        y: 60px;
+        width: 60px;
+        text: root.caption;
+    }
+}

@@ -90,14 +90,24 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
     parts.push(Box::new(JsonHooks {
         path: dir.join("hooks").join("vario.json"),
         keys: vec!["hooks".into()],
-        entries: vec![(
-            "SubagentStop".into(),
-            json!({
-                "type": "command",
-                "command": env.hook_command("subagent-stop", "vscode"),
-                "timeout": 10,
-            }),
-        )],
+        entries: vec![
+            (
+                "SessionStart".into(),
+                json!({
+                    "type": "command",
+                    "command": env.hook_command("session-start", "vscode"),
+                    "timeout": 5,
+                }),
+            ),
+            (
+                "SubagentStop".into(),
+                json!({
+                    "type": "command",
+                    "command": env.hook_command("subagent-stop", "vscode"),
+                    "timeout": 10,
+                }),
+            ),
+        ],
         defaults: Map::new(),
         kind: Kind::Hooks,
     }));

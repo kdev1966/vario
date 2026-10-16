@@ -24,12 +24,12 @@ Chaque sous-agent termine sa réponse par un court compte rendu (`RESULT`, `CHEC
 
 | Client | Sous-agents et modèle | Consignes de délégation | Hooks |
 | --- | --- | --- | --- |
-| **Claude Code** | `~/.claude/agents/`, `haiku` et `sonnet` | un bloc dans `~/.claude/CLAUDE.md` | fin de chaque sous-agent → journal ; avant chaque prompt → thermostat de quota ; une ligne de statut qui relève le quota |
-| **Cursor** | `~/.cursor/agents/`, Composer 2.5 (le modèle propre à Cursor, sans facturation tierce) | injectées au début de la session (Cursor n'a pas de fichier de règles global) | fin de chaque sous-agent → journal |
-| **OpenCode** | `~/.config/opencode/agents/`, votre `small_model` pour le lecteur, sinon le modèle de l'appelant | le fichier de règles que lit OpenCode (`AGENTS.md`, ou `~/.claude/CLAUDE.md`) | un plugin : fin de chaque sous-agent → journal |
-| **Codex** | `~/.codex/agents/*.toml`, `gpt-6-luna` pour le lecteur (sans shell), le modèle de la session pour le worker | un bloc dans `~/.codex/AGENTS.md` (Codex ne délègue que si ses consignes le demandent) | fin de chaque sous-agent → journal (à approuver une fois avec `/hooks`) |
+| **Claude Code** | `~/.claude/agents/`, `haiku` et `sonnet` | un bloc dans `~/.claude/CLAUDE.md` | début de session → jauge ; fin de chaque sous-agent → journal ; avant chaque prompt → thermostat de quota ; une ligne de statut qui relève le quota |
+| **Cursor** | `~/.cursor/agents/`, Composer 2.5 (le modèle propre à Cursor, sans facturation tierce) | injectées au début de la session (Cursor n'a pas de fichier de règles global) | début de session → consignes et jauge ; fin de chaque sous-agent → journal |
+| **OpenCode** | `~/.config/opencode/agents/`, votre `small_model` pour le lecteur, sinon le modèle de l'appelant | le fichier de règles que lit OpenCode (`AGENTS.md`, ou `~/.claude/CLAUDE.md`) | un plugin : démarrage → jauge ; fin de chaque sous-agent → journal |
+| **Codex** | `~/.codex/agents/*.toml`, `gpt-6-luna` pour le lecteur (sans shell), le modèle de la session pour le worker | un bloc dans `~/.codex/AGENTS.md` (Codex ne délègue que si ses consignes le demandent) | début de session → jauge ; fin de chaque sous-agent → journal (à approuver une fois avec `/hooks`) |
 | **Gemini CLI** | `~/.gemini/agents/`, `flash-lite` pour le lecteur (outils de lecture seuls), le modèle de la session pour le worker | un bloc dans `~/.gemini/GEMINI.md` | aucun : Gemini CLI n'a pas d'événement de fin de sous-agent |
-| **VS Code (Copilot)** | `~/.copilot/agents/*.agent.md`, Claude Haiku 4.5 pour le lecteur (`read`, `search`), le modèle de la conversation pour le worker | un bloc dans `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/vario.json` → journal (hooks en préversion : `chat.useHooks`) |
+| **VS Code (Copilot)** | `~/.copilot/agents/*.agent.md`, Claude Haiku 4.5 pour le lecteur (`read`, `search`), le modèle de la conversation pour le worker | un bloc dans `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/vario.json` : début de session → jauge ; fin de chaque sous-agent → journal (hooks en préversion : `chat.useHooks`) |
 
 Codex, Gemini CLI et VS Code suivent leur documentation et sont couverts par des tests. Les sous-agents demandent un Gemini CLI récent (ils n'existent pas en 0.1.x), et Google a fait passer une partie de ses utilisateurs à Antigravity CLI.
 
@@ -40,6 +40,8 @@ Les hooks consignent chaque délégation aux sous-agents de Vario dans un journa
 Claude Code n'exécute les lignes de statut que dans le terminal : le quota est relevé quand vous utilisez Claude Code dans un terminal, pas depuis l'extension VS Code. Le reste (sous-agents, consignes, journal, `vario usage`) fonctionne partout.
 
 **Jauge flottante.** `vario-gui --gauge`, ou **Jauge flottante** dans l'application, ouvre une fenêtre système étroite (156 px), sombre, flottante et sans bordure, dessinée comme un plugin audio et assez fine pour tenir à côté de votre éditeur : au-dessus des autres applications, sur tous les bureaux (et par-dessus les applications en plein écran sur macOS), sans icône dans le Dock ni dans la barre des tâches en mode `--gauge`. Elle montre un VU-mètre à aiguille pour le quota de 5 heures, une rangée de diodes pour celui de 7 jours, l'état du thermostat en voyants, et deux boutons rotatifs pour la part déléguée et le taux d'escalade. Déplacez-la en la saisissant n'importe où.
+
+Elle s'ouvre d'elle-même au début de la session d'un agent, dans chaque client dont Vario a installé les hooks (tous sauf Gemini CLI), et reste affichée quand l'agent se ferme ; décochez **Ouvrir la jauge avec chaque agent** dans la page **Installation** pour ne l'ouvrir qu'à la demande. Elle revient là où vous l'avez laissée, sinon dans le coin en haut à droite de l'écran. Une seule tourne à la fois : la rouvrir, ou ouvrir l'application, fait apparaître celle qui tourne. Son lien **ouvrir Vario** ouvre la fenêtre principale à côté d'elle. Lâchées près l'une de l'autre, les deux fenêtres s'aimantent, alignées par le haut ; déplacer la jauge emmène alors la fenêtre principale, et éloigner la fenêtre principale la détache. Fermer la fenêtre principale laisse la jauge affichée.
 
 ## Installation
 
@@ -86,7 +88,7 @@ vario remove                     # retirer Vario de tous les clients
 
 Sans terminal pour confirmer, Vario ne change rien, sauf si vous passez `--yes`.
 
-L'application (`vario-gui`, ou `Vario.app`) offre les mêmes fonctions en quatre onglets : **État** (avec Réparer et Retirer), **Installation** (automatique ou manuelle, les changements étant affichés avant d'être appliqués), **Délégations** et **À propos**.
+L'application (`vario-gui`, ou `Vario.app`) offre les mêmes fonctions dans un panneau sombre de la hauteur de la jauge, en quatre pages : **État** (une carte de voyants par client, avec Réparer et Retirer), **Installation** (automatique ou manuelle, les changements étant affichés avant d'être appliqués, et le réglage de la jauge), **Délégations** (une tranche de boutons rotatifs par sous-agent) et **À propos**.
 
 Les messages suivent la langue de votre système, français ou anglais ; `VARIO_LANG=en` ou `VARIO_LANG=fr` la remplace.
 

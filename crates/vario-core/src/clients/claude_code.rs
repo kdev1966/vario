@@ -1,8 +1,9 @@
 //! Claude Code: sub-agents in `<config>/agents/*.md` (YAML header with a `model`
 //! alias), the delegation guidance in `<config>/CLAUDE.md`, and in
 //! `<config>/settings.json` a `SubagentStop` hook that journals each delegation, a
-//! `UserPromptSubmit` hook for the quota thermostat, and the status line that
-//! captures the quota, for every project. `<config>` is `$CLAUDE_CONFIG_DIR`, or
+//! `SessionStart` hook that opens the floating gauge, a `UserPromptSubmit` hook for
+//! the quota thermostat, and the status line that captures the quota, for every
+//! project. `<config>` is `$CLAUDE_CONFIG_DIR`, or
 //! `~/.claude`.
 
 use std::path::PathBuf;
@@ -82,6 +83,17 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
                         "type": "command",
                         "command": env.hook_command("subagent-stop", "claude"),
                         "timeout": 10,
+                    }],
+                }),
+            ),
+            (
+                "SessionStart".into(),
+                json!({
+                    "matcher": "startup|resume",
+                    "hooks": [{
+                        "type": "command",
+                        "command": env.hook_command("session-start", "claude"),
+                        "timeout": 5,
                     }],
                 }),
             ),

@@ -5,57 +5,53 @@ msgstr ""
 "Language: fr\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-msgctxt "ClientTable"
-msgid "Client"
-msgstr "Client"
+msgctxt "ClientCard"
+msgid "AGENTS"
+msgstr "AGENTS"
 
-msgctxt "ClientTable"
-msgid "Sub-agents"
-msgstr "Sous-agents"
+msgctxt "ClientCard"
+msgid "GUIDANCE"
+msgstr "CONSIGNES"
 
-msgctxt "ClientTable"
-msgid "Instructions"
-msgstr "Consignes"
+msgctxt "ClientCard"
+msgid "HOOKS"
+msgstr "HOOKS"
 
-msgctxt "ClientTable"
-msgid "Hooks"
-msgstr "Hooks"
+msgctxt "ClientCard"
+msgid "QUOTA"
+msgstr "QUOTA"
 
-msgctxt "ClientTable"
-msgid "Quota"
-msgstr "Quota"
+msgctxt "Channel"
+msgid "DELEGATIONS"
+msgstr "DÉLÉGATIONS"
 
-msgctxt "ClientTable"
-msgid "Notes"
-msgstr "Remarques"
+msgctxt "Channel"
+msgid "ESCALATED"
+msgstr "ESCALADES"
 
-msgctxt "ReportTable"
-msgid "Sub-agent"
-msgstr "Sous-agent"
-
-msgctxt "ReportTable"
-msgid "Delegations"
-msgstr "Délégations"
+msgctxt "Channel"
+msgid "NO FOOTER"
+msgstr "SANS PIED"
 
 msgctxt "AppWindow"
-msgid "Delegations"
-msgstr "Délégations"
-
-msgctxt "ReportTable"
-msgid "Escalated"
-msgstr "Escalades"
-
-msgctxt "ReportTable"
-msgid "No footer"
-msgstr "Sans pied de page"
+msgid "STATUS"
+msgstr "ÉTAT"
 
 msgctxt "AppWindow"
-msgid "Status"
-msgstr "État"
+msgid "INSTALL"
+msgstr "INSTALLATION"
 
 msgctxt "AppWindow"
-msgid "What Vario installed in each AI client on this machine."
-msgstr "Ce que Vario a installé dans chaque client IA de cette machine."
+msgid "DELEGATIONS"
+msgstr "DÉLÉGATIONS"
+
+msgctxt "AppWindow"
+msgid "ABOUT"
+msgstr "À PROPOS"
+
+msgctxt "AppWindow"
+msgid "Floating gauge"
+msgstr "Jauge flottante"
 
 msgctxt "AppWindow"
 msgid "Refresh"
@@ -86,12 +82,12 @@ msgid "Cancel"
 msgstr "Annuler"
 
 msgctxt "AppWindow"
-msgid "Install"
-msgstr "Installation"
-
-msgctxt "AppWindow"
 msgid "Vario adds economical sub-agents and delegation guidance to your AI clients. Nothing changes before you see the changes and apply them."
 msgstr "Vario ajoute à vos clients IA des sous-agents économiques et des consignes de délégation. Rien ne change avant que vous ayez vu les changements et cliqué sur Appliquer."
+
+msgctxt "AppWindow"
+msgid "CLIENTS"
+msgstr "CLIENTS"
 
 msgctxt "AppWindow"
 msgid "Manual mode: choose the clients one by one"
@@ -100,6 +96,22 @@ msgstr "Mode manuel : choisir les clients un par un"
 msgctxt "AppWindow"
 msgid "No supported AI client was found on this machine."
 msgstr "Aucun client IA compatible n'a été trouvé sur cette machine."
+
+msgctxt "AppWindow"
+msgid "GAUGE"
+msgstr "JAUGE"
+
+msgctxt "AppWindow"
+msgid "Open the gauge with each agent"
+msgstr "Ouvrir la jauge avec chaque agent"
+
+msgctxt "AppWindow"
+msgid "PLANNED CHANGES"
+msgstr "CHANGEMENTS PRÉVUS"
+
+msgctxt "AppWindow"
+msgid "See the changes first: nothing is written before you apply them."
+msgstr "Voyez d'abord les changements : rien n'est écrit avant que vous les appliquiez."
 
 msgctxt "AppWindow"
 msgid "See the changes"
@@ -114,20 +126,12 @@ msgid "Each time one of Vario's sub-agents finishes, its report is noted locally
 msgstr "Chaque fois qu'un sous-agent de Vario termine, son compte rendu est noté sur cette machine. Les escalades et les pieds de page manquants montrent où la délégation atteint ses limites."
 
 msgctxt "AppWindow"
-msgid "About"
-msgstr "À propos"
-
-msgctxt "AppWindow"
-msgid "Vario {}"
-msgstr "Vario {}"
+msgid "VERSION {}"
+msgstr "VERSION {}"
 
 msgctxt "AppWindow"
 msgid "Routes the simple tasks of your AI agents to cheaper models, through their own sub-agents. Local: Vario sends nothing to anyone. MIT licence."
 msgstr "Confie les tâches simples de vos agents IA à des modèles moins chers, grâce à leurs propres sous-agents. Local : Vario n'envoie rien à personne. Licence MIT."
-
-msgctxt "AppWindow"
-msgid "Floating gauge"
-msgstr "Jauge flottante"
 
 msgctxt "GaugeWindow"
 msgid "QUOTA 5 H"
