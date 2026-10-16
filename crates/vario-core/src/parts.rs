@@ -13,11 +13,16 @@ pub const SERVER_NAME: &str = "vario";
 /// Whether a hook command runs Vario's `hook` subcommand: `vario hook …`,
 /// `/usr/local/bin/vario hook …`, `"C:\Program Files\vario.exe" hook …`.
 pub fn is_vario_hook_command(command: &str) -> bool {
-    command.match_indices(" hook ").any(|(at, _)| {
-        let program = command[..at].trim_end_matches(['"', '\'']);
+    hook_program(command).is_some()
+}
+
+/// The program a Vario hook command runs (`/usr/local/bin/vario`), without quotes.
+pub fn hook_program(command: &str) -> Option<&str> {
+    command.match_indices(" hook ").find_map(|(at, _)| {
+        let program = command[..at].trim_matches(['"', '\'']);
         let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
         let name = name.to_lowercase();
-        name == "vario" || name == "vario.exe"
+        (name == "vario" || name == "vario.exe").then_some(program)
     })
 }
 
@@ -40,6 +45,10 @@ pub trait Part {
     fn remove(&self, session: &mut Session) -> Result<()>;
     /// Whether the change is in place; any error counts as "no".
     fn present(&self) -> bool;
+    /// The programs Vario's hooks currently installed by this part run.
+    fn hook_programs(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 fn key_refs(keys: &[String]) -> Vec<&str> {
@@ -215,6 +224,34 @@ impl Part for JsonHooks {
                 .and_then(Value::as_array)
                 .is_some_and(|items| items.contains(entry))
         })
+    }
+
+    fn hook_programs(&self) -> Vec<PathBuf> {
+        let Ok(data) = files::read_json(&self.path) else {
+            return Vec::new();
+        };
+        let Some(hooks) = files::nested(&data, &key_refs(&self.keys)) else {
+            return Vec::new();
+        };
+        fn commands<'a>(value: &'a Value, into: &mut Vec<&'a str>) {
+            match value {
+                Value::String(text) => into.push(text),
+                Value::Array(items) => items.iter().for_each(|item| commands(item, into)),
+                Value::Object(map) => map.values().for_each(|item| commands(item, into)),
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for (event, _) in &self.entries {
+            if let Some(items) = hooks.get(event) {
+                commands(items, &mut found);
+            }
+        }
+        found
+            .into_iter()
+            .filter_map(hook_program)
+            .map(PathBuf::from)
+            .collect()
     }
 }
 

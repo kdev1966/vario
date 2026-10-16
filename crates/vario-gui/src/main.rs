@@ -101,14 +101,18 @@ fn open(
     Ok((window, app))
 }
 
-/// Hooks must run the `vario` command, not this interface: the one installed next to
-/// it, else the one on `PATH`, else plain `vario`.
+/// Hooks must run the `vario` command, not this interface: the one the installed hooks
+/// already run, so the interface and the command line agree; else the one installed
+/// next to the interface (inside Vario.app); else the one on `PATH`; else plain `vario`.
 fn command_line_path(env: &Env) -> PathBuf {
     let name = if cfg!(windows) { "vario.exe" } else { "vario" };
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
-        .filter(|path| path.is_file())
+    install::hook_program(env)
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+                .filter(|path| path.is_file())
+        })
         .or_else(|| env.which("vario"))
         .unwrap_or_default()
 }

@@ -30,6 +30,7 @@ jobs:
             libx11-xcb-dev libxcursor-dev libwayland-dev libdbus-1-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
+      - run: shellcheck scripts/*.sh
 
   test:
     name: test (${{ matrix.os }})
@@ -54,6 +55,21 @@ jobs:
           cargo run --quiet -p vario -- --version
           cargo run --quiet -p vario -- doctor
           cargo run --quiet -p vario -- hook session-start --via cursor
+
+  macos-app:
+    name: Vario.app (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/macos-app.sh
+      - name: Check the bundle
+        run: |
+          test -x dist/Vario.app/Contents/MacOS/vario-gui
+          test -x dist/Vario.app/Contents/MacOS/vario
+          dist/Vario.app/Contents/MacOS/vario --version
+          plutil -lint dist/Vario.app/Contents/Info.plist
 
   msrv:
     name: minimum Rust version (1.88, core and command line)
