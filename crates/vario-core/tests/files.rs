@@ -230,3 +230,23 @@ fn find_named(root: &Path, name: &str) -> Vec<std::path::PathBuf> {
     }
     found
 }
+
+#[test]
+fn a_dry_run_reports_a_repeated_change_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let shared = dir.path().join("CLAUDE.md");
+    let agent = dir.path().join("agent.md");
+    fs::write(&shared, "rules").unwrap();
+    fs::write(&agent, "agent").unwrap();
+    let mut dry = Session::with_backup_dir(true, dir.path().join("backups"));
+    dry.write_text(&shared, "rules + block", Action::InstructionsSet)
+        .unwrap();
+    dry.write_text(&shared, "rules + block", Action::InstructionsSet)
+        .unwrap();
+    dry.delete(&agent, Action::Deleted).unwrap();
+    dry.delete(&agent, Action::Deleted).unwrap();
+    assert_eq!(dry.changes().len(), 2);
+    dry.write_text(&shared, "rules + other", Action::InstructionsSet)
+        .unwrap();
+    assert_eq!(dry.changes().len(), 3, "a different content is a change");
+}

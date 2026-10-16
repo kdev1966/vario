@@ -4,6 +4,7 @@
 
 mod claude_code;
 mod cursor;
+mod opencode;
 pub mod subagents;
 
 use std::collections::HashMap;
@@ -76,10 +77,11 @@ fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
 
-/// Whether the JSON file registers an MCP server under `mcpServers.<name>`.
-fn has_mcp_server(path: &Path, name: &str) -> bool {
+/// Whether the JSON file registers an MCP server `name` in the object at `key`
+/// (`mcpServers` for most clients).
+fn has_mcp_server(path: &Path, key: &str, name: &str) -> bool {
     files::read_json(path).is_ok_and(|data| {
-        files::nested(&data, &["mcpServers"]).is_some_and(|servers| servers.contains_key(name))
+        files::nested(&data, &[key]).is_some_and(|servers| servers.contains_key(name))
     })
 }
 
@@ -110,7 +112,11 @@ impl Integration {
 
 /// Every supported client, in the order they are shown.
 pub fn integrations() -> Vec<Integration> {
-    vec![claude_code::integration(), cursor::integration()]
+    vec![
+        claude_code::integration(),
+        cursor::integration(),
+        opencode::integration(),
+    ]
 }
 
 pub fn by_name(name: &str) -> Option<Integration> {

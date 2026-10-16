@@ -329,3 +329,166 @@ fn handoff_connected_in_cursor() {
     assert_eq!(handoff::state(&cursor, &env), State::Connected);
     assert_eq!(handoff::state(&claude, &env), State::NotConnected);
 }
+
+#[test]
+fn opencode_is_detected_by_its_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = fake_env(dir.path());
+    assert!(!by_name("opencode").unwrap().detect(&env));
+    fs::create_dir_all(env.home.join(".config").join("opencode")).unwrap();
+    assert!(by_name("opencode").unwrap().detect(&env));
+
+    let mut env = env;
+    let xdg = dir.path().join("xdg");
+    env.vars
+        .insert("XDG_CONFIG_HOME".into(), OsString::from(&xdg));
+    assert!(!by_name("opencode").unwrap().detect(&env));
+    fs::create_dir_all(xdg.join("opencode")).unwrap();
+    assert!(by_name("opencode").unwrap().detect(&env));
+}
+
+#[test]
+fn opencode_install_then_remove_without_claude_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = fake_env(dir.path());
+    let config = env.home.join(".config").join("opencode");
+    let opencode = vec![by_name("opencode").unwrap()];
+
+    let outcomes = install::apply(&mut session(dir.path()), &opencode, &env);
+    assert!(outcomes[0].ok());
+
+    let reader = fs::read_to_string(config.join("agents").join("vario-reader.md")).unwrap();
+    assert!(reader.starts_with("---\ndescription: \""));
+    assert!(reader.contains("\nmode: subagent\n"));
+    assert!(reader.contains("permission:\n  edit: deny\n  bash: deny\n"));
+    assert!(!reader.contains("model:"));
+    let worker = fs::read_to_string(config.join("agents").join("vario-worker.md")).unwrap();
+    assert!(!worker.contains("permission:"));
+    assert!(!worker.contains("model:"));
+    let rules = fs::read_to_string(config.join("AGENTS.md")).unwrap();
+    assert!(rules.contains(BLOCK_BEGIN));
+
+    assert_eq!(
+        install::status(&opencode[0], &env),
+        [(Kind::Subagents, true), (Kind::Instructions, true)]
+    );
+
+    let removed = install::remove(&mut session(dir.path()), &opencode, &env);
+    assert!(removed[0].ok());
+    assert!(!config.join("agents").join("vario-reader.md").exists());
+    assert!(!config.join("agents").join("vario-worker.md").exists());
+    assert!(!config.join("AGENTS.md").exists());
+}
+
+#[test]
+fn opencode_uses_small_model_for_the_reader() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = fake_env(dir.path());
+    let config = env.home.join(".config").join("opencode");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(
+        config.join("opencode.json"),
+        r#"{"small_model": "anthropic/claude-haiku-5-5"}"#,
+    )
+    .unwrap();
+
+    let outcomes = install::apply(
+        &mut session(dir.path()),
+        &[by_name("opencode").unwrap()],
+        &env,
+    );
+    assert!(outcomes[0].ok());
+    let reader = fs::read_to_string(config.join("agents").join("vario-reader.md")).unwrap();
+    assert!(reader.contains("model: \"anthropic/claude-haiku-5-5\""));
+    let worker = fs::read_to_string(config.join("agents").join("vario-worker.md")).unwrap();
+    assert!(!worker.contains("model:"));
+}
+
+#[test]
+fn opencode_keeps_reading_the_users_claude_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = fake_env(dir.path());
+    let claude_md = env.home.join(".claude").join("CLAUDE.md");
+    fs::create_dir_all(claude_md.parent().unwrap()).unwrap();
+    let user_rules = "# My rules\n\nBe brief.\n";
+    fs::write(&claude_md, user_rules).unwrap();
+    let opencode = vec![by_name("opencode").unwrap()];
+
+    let outcomes = install::apply(&mut session(dir.path()), &opencode, &env);
+    assert!(outcomes[0].ok());
+    let rules = fs::read_to_string(&claude_md).unwrap();
+    assert!(rules.starts_with(user_rules) && rules.contains(BLOCK_BEGIN));
+    assert!(
+        !env.home
+            .join(".config")
+            .join("opencode")
+            .join("AGENTS.md")
+            .exists()
+    );
+
+    let removed = install::remove(&mut session(dir.path()), &opencode, &env);
+    assert!(removed[0].ok());
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), user_rules);
+}
+
+#[test]
+fn opencode_writes_agents_md_when_it_exists_or_the_fallback_is_off() {
+    let opencode = vec![by_name("opencode").unwrap()];
+    let user_rules = "# My rules\n\nBe brief.\n";
+
+    // (a) an existing AGENTS.md is the file OpenCode reads.
+    let dir = tempfile::tempdir().unwrap();
+    let env = fake_env(dir.path());
+    let config = env.home.join(".config").join("opencode");
+    let claude_md = env.home.join(".claude").join("CLAUDE.md");
+    fs::create_dir_all(&config).unwrap();
+    fs::create_dir_all(claude_md.parent().unwrap()).unwrap();
+    fs::write(config.join("AGENTS.md"), "My agents text\n").unwrap();
+    fs::write(&claude_md, user_rules).unwrap();
+    let outcomes = install::apply(&mut session(dir.path()), &opencode, &env);
+    assert!(outcomes[0].ok());
+    let agents = fs::read_to_string(config.join("AGENTS.md")).unwrap();
+    assert!(agents.starts_with("My agents text\n") && agents.contains(BLOCK_BEGIN));
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), user_rules);
+
+    // (b) with the Claude Code fallback disabled, AGENTS.md is created.
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = fake_env(dir.path());
+    let config = env.home.join(".config").join("opencode");
+    let claude_md = env.home.join(".claude").join("CLAUDE.md");
+    fs::create_dir_all(claude_md.parent().unwrap()).unwrap();
+    fs::write(&claude_md, user_rules).unwrap();
+    env.vars
+        .insert("OPENCODE_DISABLE_CLAUDE_CODE".into(), OsString::from("1"));
+    let outcomes = install::apply(&mut session(dir.path()), &opencode, &env);
+    assert!(outcomes[0].ok());
+    let agents = fs::read_to_string(config.join("AGENTS.md")).unwrap();
+    assert!(agents.contains(BLOCK_BEGIN));
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), user_rules);
+}
+
+#[cfg(unix)]
+#[test]
+fn handoff_connected_in_opencode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = fake_env(dir.path());
+    let opencode = by_name("opencode").unwrap();
+
+    let bin = dir.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let command = bin.join("handoff");
+    fs::write(&command, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o755)).unwrap();
+    env.vars.insert("PATH".into(), OsString::from(&bin));
+    assert_eq!(handoff::state(&opencode, &env), State::NotConnected);
+
+    let config = env.home.join(".config").join("opencode");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(
+        config.join("opencode.json"),
+        r#"{"mcp": {"handoff": {"type": "local"}}}"#,
+    )
+    .unwrap();
+    assert_eq!(handoff::state(&opencode, &env), State::Connected);
+}

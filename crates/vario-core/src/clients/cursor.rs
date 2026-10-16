@@ -20,7 +20,11 @@ pub fn integration() -> Integration {
         detect: |env| env.which("cursor").is_some() || config_dir(env).is_dir(),
         parts,
         handoff_connected: |env| {
-            has_mcp_server(&config_dir(env).join("mcp.json"), handoff::SERVER_NAME)
+            has_mcp_server(
+                &config_dir(env).join("mcp.json"),
+                "mcpServers",
+                handoff::SERVER_NAME,
+            )
         },
     }
 }

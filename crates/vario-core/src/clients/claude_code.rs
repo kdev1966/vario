@@ -35,7 +35,7 @@ fn user_state_file(env: &Env) -> PathBuf {
 }
 
 fn handoff_connected(env: &Env) -> bool {
-    has_mcp_server(&user_state_file(env), handoff::SERVER_NAME)
+    has_mcp_server(&user_state_file(env), "mcpServers", handoff::SERVER_NAME)
 }
 
 /// Claude Code's model aliases follow each family's latest version. Until the

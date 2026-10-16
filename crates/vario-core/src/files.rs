@@ -5,7 +5,7 @@
 //! parse exactly (for example JSON with comments) rather than risk losing content.
 //! Every session records what it touched, so that [`restore`] can undo it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, Permissions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -93,6 +93,9 @@ pub struct Session {
     changes: Vec<Change>,
     touched: HashSet<PathBuf>,
     manifest: Manifest,
+    /// In a dry run, what each path would hold (`None`: deleted), so that two parts
+    /// making the same change to a shared file report it once, as a real run would.
+    simulated: HashMap<PathBuf, Option<String>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -128,6 +131,7 @@ impl Session {
             backup_dir,
             changes: Vec::new(),
             touched: HashSet::new(),
+            simulated: HashMap::new(),
             manifest: Manifest {
                 version: MANIFEST_VERSION,
                 entries: Vec::new(),
@@ -156,10 +160,16 @@ impl Session {
             Err(err) if err.kind() == ErrorKind::NotFound => {}
             Err(err) => return Err(io(path)(err)),
         }
-        self.note(path, action);
         if self.dry_run {
+            if self.simulated.get(path) == Some(&Some(content.to_string())) {
+                return Ok(());
+            }
+            self.simulated
+                .insert(path.to_path_buf(), Some(content.to_string()));
+            self.note(path, action);
             return Ok(());
         }
+        self.note(path, action);
         self.record(path)?;
         atomic_write(path, content)
     }
@@ -169,10 +179,14 @@ impl Session {
         if !path.exists() {
             return Ok(());
         }
-        self.note(path, action);
         if self.dry_run {
+            if self.simulated.insert(path.to_path_buf(), None) == Some(None) {
+                return Ok(());
+            }
+            self.note(path, action);
             return Ok(());
         }
+        self.note(path, action);
         self.record(path)?;
         fs::remove_file(path).map_err(io(path))
     }
