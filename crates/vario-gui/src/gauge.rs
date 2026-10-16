@@ -57,7 +57,7 @@ impl Reading {
         let journal = report::summarize(data_dir).unwrap_or_default();
         let escalated = (journal.total.delegations > 0)
             .then(|| journal.total.escalated as f64 * 100.0 / journal.total.delegations as f64);
-        let time = chrono::Local::now().format("%H:%M").to_string();
+        // Short: the gauge is narrow.
         let updated = match quota.map(|quota| quota.captured_at) {
             Some(captured) => {
                 let seen = chrono::DateTime::from_timestamp(captured, 0)
@@ -67,17 +67,9 @@ impl Reading {
                             .to_string()
                     })
                     .unwrap_or_default();
-                tr!(
-                    lang,
-                    "quota seen at {seen} · read at {time} · open Vario",
-                    "quota relevé à {seen} · lu à {time} · ouvrir Vario"
-                )
+                tr!(lang, "quota seen at {seen}", "quota relevé à {seen}")
             }
-            None => tr!(
-                lang,
-                "read at {time} · open Vario",
-                "lu à {time} · ouvrir Vario"
-            ),
+            None => tr!(lang, "no quota yet", "pas encore de quota"),
         };
         let known = |value: Option<f64>| value.map_or(-1.0, |value| value as f32);
         Reading {
@@ -223,7 +215,7 @@ mod tests {
         assert_eq!(reading.delegated, -1.0);
         assert_eq!(reading.escalated, -1.0);
         assert_eq!(reading.five_hour_reset, "no quota yet");
-        assert!(reading.updated.contains("open Vario"));
+        assert_eq!(reading.updated, "no quota yet");
     }
 
     #[test]
