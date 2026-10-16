@@ -4,6 +4,29 @@ All notable changes to Vario are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- The floating gauge opens by itself when an agent's session starts: a session-start
+  hook for Claude Code, Codex and VS Code, the OpenCode plugin when OpenCode starts,
+  and Cursor's existing hook. It stays up when the agent closes. **Open the gauge
+  with each agent**, on the Install page, turns this off. Run `vario doctor --fix`
+  (or **Repair**) to add the new hooks to an existing setup.
+- The gauge and the main window snap together when released close to each other;
+  dragging the gauge brings the docked main window along. The gauge comes back where
+  it was left, else in the top right corner of the screen.
+
+### Changed
+
+- The main window has the gauge's look: a dark, frameless panel the height of the
+  gauge, with a card of lamps per client and a channel of knobs per sub-agent.
+  Closing it leaves the gauge up; on macOS its Dock icon shows only while it is open.
+- One interface runs at a time: opening `vario-gui` or `Vario.app` again brings up
+  the running one.
+- Only Cursor still takes the delegation guidance from the session-start hook; the
+  other clients read it from their instructions file.
+
 ## [0.2.1] - 2026-10-16
 
 ### Fixed

@@ -24,12 +24,12 @@ Each sub-agent ends its answer with a short report (`RESULT`, `CHECKS`, `UNCERTA
 
 | Client | Sub-agents and model | Delegation guidance | Hooks |
 | --- | --- | --- | --- |
-| **Claude Code** | `~/.claude/agents/`, `haiku` and `sonnet` | a block in `~/.claude/CLAUDE.md` | end of each sub-agent → journal; before each prompt → quota thermostat; a status line that reads the quota |
-| **Cursor** | `~/.cursor/agents/`, Composer 2.5 (Cursor's own model, no third-party billing) | injected at session start (Cursor has no global rules file) | end of each sub-agent → journal |
-| **OpenCode** | `~/.config/opencode/agents/`, your `small_model` for the reader, else the caller's model | the rules file OpenCode reads (`AGENTS.md`, or `~/.claude/CLAUDE.md`) | a plugin: end of each sub-agent → journal |
-| **Codex** | `~/.codex/agents/*.toml`, `gpt-6-luna` for the reader (no shell), the session's model for the worker | a block in `~/.codex/AGENTS.md` (Codex delegates only when its instructions ask) | end of each sub-agent → journal (approve it once with `/hooks`) |
+| **Claude Code** | `~/.claude/agents/`, `haiku` and `sonnet` | a block in `~/.claude/CLAUDE.md` | session start → gauge; end of each sub-agent → journal; before each prompt → quota thermostat; a status line that reads the quota |
+| **Cursor** | `~/.cursor/agents/`, Composer 2.5 (Cursor's own model, no third-party billing) | injected at session start (Cursor has no global rules file) | session start → guidance and gauge; end of each sub-agent → journal |
+| **OpenCode** | `~/.config/opencode/agents/`, your `small_model` for the reader, else the caller's model | the rules file OpenCode reads (`AGENTS.md`, or `~/.claude/CLAUDE.md`) | a plugin: start → gauge; end of each sub-agent → journal |
+| **Codex** | `~/.codex/agents/*.toml`, `gpt-6-luna` for the reader (no shell), the session's model for the worker | a block in `~/.codex/AGENTS.md` (Codex delegates only when its instructions ask) | session start → gauge; end of each sub-agent → journal (approve them once with `/hooks`) |
 | **Gemini CLI** | `~/.gemini/agents/`, `flash-lite` for the reader (reading tools only), the session's model for the worker | a block in `~/.gemini/GEMINI.md` | none: Gemini CLI has no sub-agent end event |
-| **VS Code (Copilot)** | `~/.copilot/agents/*.agent.md`, Claude Haiku 4.5 for the reader (`read`, `search`), the chat's model for the worker | a block in `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/vario.json` → journal (hooks are a preview: `chat.useHooks`) |
+| **VS Code (Copilot)** | `~/.copilot/agents/*.agent.md`, Claude Haiku 4.5 for the reader (`read`, `search`), the chat's model for the worker | a block in `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/vario.json`: session start → gauge; end of each sub-agent → journal (hooks are a preview: `chat.useHooks`) |
 
 Codex, Gemini CLI and VS Code follow their documentation and are covered by tests. Sub-agents need a recent Gemini CLI (they are not in 0.1.x), and Google moved part of its users to Antigravity CLI.
 
@@ -40,6 +40,8 @@ The hooks note every delegation to Vario's sub-agents in a local journal; `vario
 Claude Code runs status lines in the terminal only: the quota is read while you use Claude Code in a terminal, not from the VS Code extension. The rest (sub-agents, guidance, journal, `vario usage`) works everywhere.
 
 **Floating gauge.** `vario-gui --gauge`, or **Floating gauge** in the application, opens a slim (156 px), dark, floating and borderless system window drawn like an audio plugin, narrow enough to sit beside your editor: above other applications, on every desktop (and over full-screen apps on macOS), with no Dock icon or taskbar entry in `--gauge` mode. It shows a needle meter for the 5-hour quota, a row of lit segments for the 7-day quota, the thermostat's state as lamps, and knobs for the share delegated and the escalation rate. Drag it from anywhere.
+
+It opens by itself when an agent's session starts, in every client whose hooks Vario installed (all but Gemini CLI), and stays up when the agent closes; untick **Open the gauge with each agent** on the **Install** page to open it only when you ask. It comes back where you left it, else in the top right corner of the screen. Only one runs: opening it again, or opening the application, brings up the running one. Its **open Vario** link opens the main window beside it. Released close to each other, the two windows snap together, tops aligned; dragging the gauge then brings the main window along, and dragging the main window away undocks it. Closing the main window leaves the gauge up.
 
 ## Install
 
@@ -86,7 +88,7 @@ vario remove                     # remove Vario from every client
 
 Without a terminal to confirm, Vario changes nothing unless you pass `--yes`.
 
-The application (`vario-gui`, or `Vario.app`) offers the same in four tabs: **Status** (with Repair and Remove), **Install** (automatic or manual, the changes shown before they are applied), **Delegations** and **About**.
+The application (`vario-gui`, or `Vario.app`) offers the same in a dark panel the height of the gauge, in four pages: **Status** (a card of lamps per client, with Repair and Remove), **Install** (automatic or manual, the changes shown before they are applied, and the gauge setting), **Delegations** (a channel of knobs per sub-agent) and **About**.
 
 Messages follow your system's language, French or English; `VARIO_LANG=en` or `VARIO_LANG=fr` overrides it.
 
