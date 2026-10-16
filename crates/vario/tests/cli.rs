@@ -1,6 +1,4 @@
 //! End-to-end tests: run the real `vario` binary against a throwaway home directory.
-//! Unix only: the home directory is set through `HOME`, which Windows does not use.
-#![cfg(unix)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -79,9 +77,15 @@ impl Sandbox {
             .args(args)
             .env_clear()
             .env("HOME", self.dir.path().join("home"))
+            .env("USERPROFILE", self.dir.path().join("home"))
             .env("VARIO_HOME", self.data_dir())
             .env("VARIO_LANG", "en")
             .env("PATH", self.dir.path().join("bin"));
+        // A Windows process started without `SystemRoot` can fail to initialise.
+        #[cfg(windows)]
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", root);
+        }
         command
     }
 
@@ -92,6 +96,11 @@ impl Sandbox {
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }
     }
+}
+
+/// Escapes a string the way it appears inside a JSON string literal (Windows paths hold backslashes).
+fn json_escaped(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn exists(path: &Path) -> bool {
@@ -213,7 +222,7 @@ fn install_writes_hooks_that_run_this_binary() {
     let out = sandbox.run(&["install", "--yes"]);
     assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
 
-    let exe = env!("CARGO_BIN_EXE_vario");
+    let exe = json_escaped(env!("CARGO_BIN_EXE_vario"));
     let settings = fs::read_to_string(sandbox.claude("settings.json")).unwrap();
     let plain = format!("\"command\": \"{exe} {CLAUDE_HOOK_ARGS}\"");
     let quoted = format!("\"command\": \"\\\"{exe}\\\" {CLAUDE_HOOK_ARGS}\"");
@@ -288,12 +297,13 @@ fn doctor_fix_rewrites_a_hook_left_by_a_moved_binary() {
     let sandbox = Sandbox::new();
     assert_eq!(sandbox.run(&["install", "--yes"]).code, Some(0));
 
-    let exe = env!("CARGO_BIN_EXE_vario");
+    let exe = json_escaped(env!("CARGO_BIN_EXE_vario"));
+    let exe = exe.as_str();
     let path = sandbox.claude("settings.json");
     let settings = fs::read_to_string(&path).unwrap();
     assert!(settings.contains(exe), "{settings}");
     let moved = settings.replace(exe, "/old/place/vario");
-    assert!(moved.contains("/old/place/vario hook subagent-stop --via claude"));
+    assert!(moved.contains("/old/place/vario"), "{moved}");
     fs::write(&path, moved).unwrap();
 
     let out = sandbox.run(&["doctor"]);
