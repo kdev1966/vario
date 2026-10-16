@@ -44,6 +44,8 @@ impl Event {
 pub enum Via {
     Claude,
     Cursor,
+    /// Vario's OpenCode plugin, which passes a sub-agent's end in Cursor's shape.
+    OpenCode,
 }
 
 impl Via {
@@ -51,6 +53,7 @@ impl Via {
         match name {
             "claude" => Some(Via::Claude),
             "cursor" => Some(Via::Cursor),
+            "opencode" => Some(Via::OpenCode),
             _ => None,
         }
     }
@@ -59,6 +62,7 @@ impl Via {
         match self {
             Via::Claude => "claude",
             Via::Cursor => "cursor",
+            Via::OpenCode => "opencode",
         }
     }
 }
@@ -82,7 +86,9 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
     }
     match event {
         Event::SessionStart => match via {
-            Via::Cursor => json!({ "additional_context": SESSION_CONTEXT }).to_string(),
+            Via::Cursor | Via::OpenCode => {
+                json!({ "additional_context": SESSION_CONTEXT }).to_string()
+            }
             Via::Claude => json!({
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
@@ -93,7 +99,7 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
         },
         Event::SubagentStop => {
             let client = if in_cursor { "cursor" } else { via.name() };
-            if let Err(err) = record(&input, client, data_dir) {
+            if let Err(err) = record(&input, client, &env.home, data_dir) {
                 log(data_dir, &format!("subagent-stop: {err}"));
             }
             quiet(via)
@@ -101,11 +107,11 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
     }
 }
 
-/// An output that changes nothing: Cursor expects JSON, Claude Code accepts nothing.
+/// An output that changes nothing: Cursor expects JSON, the others accept nothing.
 fn quiet(via: Via) -> String {
     match via {
         Via::Cursor => "{}".into(),
-        Via::Claude => String::new(),
+        Via::Claude | Via::OpenCode => String::new(),
     }
 }
 
@@ -117,7 +123,12 @@ fn cursor_hooks_installed(env: &Env) -> bool {
 /// Append the delegation to the journal, if the sub-agent is one of Vario's. Claude
 /// Code names it `agent_type` and passes its last message; Cursor names it
 /// `subagent_type` and passes a summary.
-fn record(input: &Map<String, Value>, client: &str, data_dir: &Path) -> Result<(), String> {
+fn record(
+    input: &Map<String, Value>,
+    client: &str,
+    home: &Path,
+    data_dir: &Path,
+) -> Result<(), String> {
     let text = |key: &str| input.get(key).and_then(Value::as_str);
     let Some(agent) = text("agent_type").or_else(|| text("subagent_type")) else {
         return Ok(());
@@ -125,11 +136,19 @@ fn record(input: &Map<String, Value>, client: &str, data_dir: &Path) -> Result<(
     if !subagents::is_ours(agent) {
         return Ok(());
     }
-    let footer = parse_footer(
+    let mut footer = parse_footer(
         text("last_assistant_message")
             .or_else(|| text("summary"))
             .unwrap_or_default(),
     );
+    // Some hosts have the sub-agent hand its report back through a tool call, so
+    // the last message holds no footer: read it from the sub-agent's transcript.
+    if footer.result.is_none()
+        && let Some(path) = text("agent_transcript_path")
+        && let Some(report) = last_report(&expand_home(path, home))
+    {
+        footer = parse_footer(&report);
+    }
     let project = text("cwd").map(str::to_owned).or_else(|| {
         input
             .get("workspace_roots")
@@ -149,6 +168,9 @@ fn record(input: &Map<String, Value>, client: &str, data_dir: &Path) -> Result<(
         "escalate": footer.escalate,
         "reason": footer.reason,
         "duration_ms": input.get("duration_ms"),
+        "model": input.get("subagent_model"),
+        "cost": input.get("cost"),
+        "tokens": input.get("tokens"),
         "project": project,
     });
     append(&data_dir.join(JOURNAL), &format!("{entry}\n"))
@@ -199,6 +221,43 @@ pub fn parse_footer(text: &str) -> Footer {
         }
     }
     footer
+}
+
+/// The last assistant entry of a Claude Code transcript (JSON lines): its texts and
+/// the string inputs of its tool calls, joined.
+fn last_report(transcript: &Path) -> Option<String> {
+    const TAIL: u64 = 4 << 20;
+    let bytes = fs::read(transcript).ok()?;
+    let start = bytes.len().saturating_sub(TAIL as usize);
+    let text = String::from_utf8_lossy(&bytes[start..]);
+    text.lines().rev().find_map(|line| {
+        let entry: Value = serde_json::from_str(line).ok()?;
+        if entry.get("type").and_then(Value::as_str) != Some("assistant") {
+            return None;
+        }
+        let parts = entry.pointer("/message/content")?.as_array()?;
+        let mut pieces = Vec::new();
+        for part in parts {
+            match part.get("type").and_then(Value::as_str) {
+                Some("text") => pieces.extend(part.get("text").and_then(Value::as_str)),
+                Some("tool_use") => {
+                    if let Some(Value::Object(input)) = part.get("input") {
+                        pieces.extend(input.values().filter_map(Value::as_str));
+                    }
+                }
+                _ => {}
+            }
+        }
+        (!pieces.is_empty()).then(|| pieces.join("\n"))
+    })
+}
+
+/// `~/x` relative to `home`; Claude Code's examples show transcript paths that way.
+fn expand_home(path: &str, home: &Path) -> std::path::PathBuf {
+    match path.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None => Path::new(path).to_path_buf(),
+    }
 }
 
 fn clip(text: &str) -> String {
@@ -309,6 +368,46 @@ mod tests {
         assert_eq!(entries[0]["agent"], "vario-worker");
         assert_eq!(entries[0]["escalate"], false);
         assert_eq!(entries[0]["project"], "/work/vario");
+    }
+
+    #[test]
+    fn a_report_handed_back_through_a_tool_is_read_from_the_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let env = env_in(dir.path());
+        let transcript = env.home.join("agent.jsonl");
+        fs::create_dir_all(&env.home).unwrap();
+        let entries = [
+            json!({"type": "user", "message": {"role": "user", "content": "GOAL: …"}}),
+            json!({"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "Reading the types."},
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/x"}},
+            ]}}),
+            json!({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "SubagentHandback", "input": {
+                    "message": "Done.\nRÉSULTAT : API décrite\nESCALADER : oui - à confirmer"
+                }},
+            ]}}),
+            json!({"type": "user", "message": {"content": [{"type": "tool_result"}]}}),
+        ];
+        let lines: Vec<String> = entries.iter().map(Value::to_string).collect();
+        fs::write(&transcript, lines.join("\n")).unwrap();
+        let input = json!({
+            "agent_type": "vario-reader",
+            "last_assistant_message": "",
+            "agent_transcript_path": "~/agent.jsonl",
+        });
+        run(
+            Event::SubagentStop,
+            Via::Claude,
+            &input.to_string(),
+            &env,
+            &data,
+        );
+        let entries = journal(&data);
+        assert_eq!(entries[0]["result"], "API décrite");
+        assert_eq!(entries[0]["escalate"], true);
+        assert_eq!(entries[0]["reason"], "à confirmer");
     }
 
     #[test]
