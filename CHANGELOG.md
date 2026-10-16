@@ -4,6 +4,16 @@ All notable changes to Vario are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- A delegation is journaled once even when the host reports the sub-agent's end twice.
+  Claude Code does so when it makes a background sub-agent hand its report back
+  through a tool; `vario report` also leaves out the repeats already in the journal.
+- `vario-gui --version` and `--help` answer in the terminal instead of opening the
+  window.
+
 ## [0.2.0] - 2026-10-16
 
 ### Added

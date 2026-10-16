@@ -1,13 +1,15 @@
 //! Reading and summarizing the delegation journal that the hooks write.
 
+use std::collections::VecDeque;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::error::{Result, io};
-use crate::hooks::JOURNAL;
+use crate::hooks::{self, JOURNAL, REPEAT_LOOKBACK};
 
 pub fn journal_path(data_dir: &Path) -> PathBuf {
     data_dir.join(JOURNAL)
@@ -63,11 +65,24 @@ pub fn summarize(data_dir: &Path) -> Result<Summary> {
         Err(err) => return Err(io(&path)(err)),
     };
     let mut summary = Summary::default();
+    // The last entries counted, to leave out the ones a host reported twice.
+    let mut recent: VecDeque<Value> = VecDeque::new();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(delegation) = serde_json::from_str::<Delegation>(line) else {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
             summary.unreadable += 1;
             continue;
         };
+        if recent.iter().any(|earlier| hooks::repeats(&entry, earlier)) {
+            continue;
+        }
+        let Ok(delegation) = Delegation::deserialize(&entry) else {
+            summary.unreadable += 1;
+            continue;
+        };
+        if recent.len() == REPEAT_LOOKBACK {
+            recent.pop_front();
+        }
+        recent.push_back(entry);
         summary.total.add(&delegation);
         match summary
             .agents
@@ -118,14 +133,17 @@ mod tests {
             r#"{"time":"2026-10-15T09:00:00+01:00","client":"cursor","agent":"vario-reader","result":"ok","escalate":false}"#,
             r#"{"time":"2026-10-16T11:00:00+01:00","client":"claude","agent":"vario-worker","result":"stuck","escalate":true}"#,
             r#"{"time":"2026-10-16T12:00:00+01:00","client":"claude","agent":"vario-worker","result":null,"escalate":null}"#,
+            // Reported twice by the host: counted once.
+            r#"{"time":"2026-10-16T12:00:05+01:00","client":"claude","agent":"vario-worker","result":"stuck","escalate":true}"#,
+            r#"{"time":"2026-10-16T12:00:09+01:00","client":"claude","agent":"vario-worker","result":"stuck","escalate":true}"#,
             "not json",
             "",
         ];
         fs::write(journal_path(dir.path()), lines.join("\n")).unwrap();
         let summary = summarize(dir.path()).unwrap();
         let worker = Counts {
-            delegations: 3,
-            escalated: 1,
+            delegations: 4,
+            escalated: 2,
             without_footer: 1,
         };
         let reader = Counts {
@@ -139,9 +157,9 @@ mod tests {
                 ("vario-worker".into(), worker)
             ]
         );
-        assert_eq!(summary.total.delegations, 4);
+        assert_eq!(summary.total.delegations, 5);
         assert_eq!(summary.first.as_deref(), Some("2026-10-15T09:00:00+01:00"));
-        assert_eq!(summary.last.as_deref(), Some("2026-10-16T12:00:00+01:00"));
+        assert_eq!(summary.last.as_deref(), Some("2026-10-16T12:00:05+01:00"));
         assert_eq!(summary.unreadable, 1);
     }
 }
