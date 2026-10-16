@@ -24,11 +24,13 @@ Chaque sous-agent termine sa réponse par un court compte rendu (`RESULT`, `CHEC
 
 | Client | Sous-agents et modèle | Consignes de délégation | Hooks |
 | --- | --- | --- | --- |
-| **Claude Code** | `~/.claude/agents/`, `haiku` et `sonnet` | un bloc dans `~/.claude/CLAUDE.md` | fin de chaque sous-agent → journal |
+| **Claude Code** | `~/.claude/agents/`, `haiku` et `sonnet` | un bloc dans `~/.claude/CLAUDE.md` | fin de chaque sous-agent → journal ; avant chaque prompt → thermostat de quota ; une ligne de statut qui relève le quota |
 | **Cursor** | `~/.cursor/agents/`, Composer 2.5 (le modèle propre à Cursor, sans facturation tierce) | injectées au début de la session (Cursor n'a pas de fichier de règles global) | fin de chaque sous-agent → journal |
 | **OpenCode** | `~/.config/opencode/agents/`, votre `small_model` pour le lecteur, sinon le modèle de l'appelant | le fichier de règles que lit OpenCode (`AGENTS.md`, ou `~/.claude/CLAUDE.md`) | un plugin : fin de chaque sous-agent → journal |
 
 Les hooks consignent chaque délégation aux sous-agents de Vario dans un journal local ; `vario report` et l'onglet **Délégations** de l'application le résument : délégations, escalades et réponses sans compte rendu.
+
+**Quota et thermostat (Claude Code).** Claude Code n'indique qu'à la ligne de statut la part de votre abonnement déjà consommée. La ligne de statut de Vario la relève et affiche `Vario · 5 h 23 % · 7 j 41 %` ; si vous avez déjà une ligne de statut, Vario l'enveloppe : elle reste exactement la même. Avant chaque prompt, le thermostat regarde la fenêtre la plus consommée : dès 50 %, il demande à la session principale de déléguer davantage ; dès 80 %, il vous avertit aussi ; à 100 %, il propose de changer d'agent après avoir enregistré une passation [Handoff](https://github.com/kdev1966/Handoff-CLI). `vario usage` affiche le quota, les tokens par modèle (session principale et sous-agents) sur 5 heures et 7 jours, la part du travail déléguée, et les serveurs MCP connectés mais jamais utilisés.
 
 ## Installation
 
@@ -68,6 +70,7 @@ vario install --manual           # choisir les clients un par un
 vario install --client opencode  # configurer un client, même s'il n'est pas détecté
 vario doctor                     # ce qui est installé où ; --fix le répare
 vario report                     # le journal des délégations, par sous-agent
+vario usage                      # quota, thermostat et tokens consommés, d'après les journaux locaux
 vario restore --list             # les sauvegardes ; `vario restore` remet la plus récente
 vario remove                     # retirer Vario de tous les clients
 ```
