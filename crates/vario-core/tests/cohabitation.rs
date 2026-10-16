@@ -349,8 +349,12 @@ fn install_then_remove_leaves_handoff_and_user_files_byte_identical() {
 fn handoff_stays_connected() {
     let dir = tempfile::tempdir().unwrap();
     let (env, _paths) = handoff_home(dir.path());
+    // The clients this Handoff setup is connected to.
     let connected = |when: &str| {
-        for integration in integrations() {
+        for integration in integrations()
+            .into_iter()
+            .filter(|integration| ["claude", "cursor", "opencode"].contains(&integration.name))
+        {
             assert_eq!(
                 handoff::state(&integration, &env),
                 State::Connected,

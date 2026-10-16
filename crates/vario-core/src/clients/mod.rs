@@ -3,9 +3,12 @@
 //! Paths and formats come from each client's official documentation.
 
 pub(crate) mod claude_code;
+mod codex;
 mod cursor;
+mod gemini;
 mod opencode;
 pub mod subagents;
+mod vscode;
 
 use std::collections::HashMap;
 use std::env;
@@ -142,6 +145,9 @@ pub fn integrations() -> Vec<Integration> {
         claude_code::integration(),
         cursor::integration(),
         opencode::integration(),
+        codex::integration(),
+        gemini::integration(),
+        vscode::integration(),
     ]
 }
 

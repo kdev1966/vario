@@ -52,6 +52,8 @@ pub enum Via {
     Cursor,
     /// Vario's OpenCode plugin, which passes a sub-agent's end in Cursor's shape.
     OpenCode,
+    Codex,
+    VsCode,
 }
 
 impl Via {
@@ -60,6 +62,8 @@ impl Via {
             "claude" => Some(Via::Claude),
             "cursor" => Some(Via::Cursor),
             "opencode" => Some(Via::OpenCode),
+            "codex" => Some(Via::Codex),
+            "vscode" => Some(Via::VsCode),
             _ => None,
         }
     }
@@ -69,6 +73,8 @@ impl Via {
             Via::Claude => "claude",
             Via::Cursor => "cursor",
             Via::OpenCode => "opencode",
+            Via::Codex => "codex",
+            Via::VsCode => "vscode",
         }
     }
 }
@@ -95,7 +101,7 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
             Via::Cursor | Via::OpenCode => {
                 json!({ "additional_context": SESSION_CONTEXT }).to_string()
             }
-            Via::Claude => json!({
+            Via::Claude | Via::Codex | Via::VsCode => json!({
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
                     "additionalContext": SESSION_CONTEXT,
@@ -173,10 +179,11 @@ fn thermostat(env: &Env, data_dir: &Path) -> Option<String> {
     Some(output.to_string())
 }
 
-/// An output that changes nothing: Cursor expects JSON, the others accept nothing.
+/// An output that changes nothing: Cursor, Codex and VS Code expect JSON, the others
+/// accept nothing.
 fn quiet(via: Via) -> String {
     match via {
-        Via::Cursor => "{}".into(),
+        Via::Cursor | Via::Codex | Via::VsCode => "{}".into(),
         Via::Claude | Via::OpenCode => String::new(),
     }
 }

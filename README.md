@@ -9,7 +9,7 @@
 
 It runs on **macOS, Linux and Windows**, as a command (`vario`) and as an application (`vario-gui`).
 
-> Vario is young (phase 1 of its [roadmap](vario-document-de-conception.md), in French). It has been tried on a real machine with Claude Code and OpenCode; Cursor support follows Cursor's documentation and is covered by tests, not yet by a real installation.
+> Vario is young (phase 2 of its [roadmap](vario-document-de-conception.md), in French). Delegation has been tried for real with Claude Code and OpenCode. Cursor, Codex, Gemini CLI and VS Code follow their documentation and are covered by tests; Gemini CLI and VS Code were installed on a real machine, without a delegation tried yet.
 
 ## How it works
 
@@ -27,6 +27,11 @@ Each sub-agent ends its answer with a short report (`RESULT`, `CHECKS`, `UNCERTA
 | **Claude Code** | `~/.claude/agents/`, `haiku` and `sonnet` | a block in `~/.claude/CLAUDE.md` | end of each sub-agent → journal; before each prompt → quota thermostat; a status line that reads the quota |
 | **Cursor** | `~/.cursor/agents/`, Composer 2.5 (Cursor's own model, no third-party billing) | injected at session start (Cursor has no global rules file) | end of each sub-agent → journal |
 | **OpenCode** | `~/.config/opencode/agents/`, your `small_model` for the reader, else the caller's model | the rules file OpenCode reads (`AGENTS.md`, or `~/.claude/CLAUDE.md`) | a plugin: end of each sub-agent → journal |
+| **Codex** | `~/.codex/agents/*.toml`, `gpt-6-luna` for the reader (no shell), the session's model for the worker | a block in `~/.codex/AGENTS.md` (Codex delegates only when its instructions ask) | end of each sub-agent → journal (approve it once with `/hooks`) |
+| **Gemini CLI** | `~/.gemini/agents/`, `flash-lite` for the reader (reading tools only), the session's model for the worker | a block in `~/.gemini/GEMINI.md` | none: Gemini CLI has no sub-agent end event |
+| **VS Code (Copilot)** | `~/.copilot/agents/*.agent.md`, Claude Haiku 4.5 for the reader (`read`, `search`), the chat's model for the worker | a block in `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/vario.json` → journal (hooks are a preview: `chat.useHooks`) |
+
+Codex, Gemini CLI and VS Code follow their documentation and are covered by tests. Sub-agents need a recent Gemini CLI (they are not in 0.1.x), and Google moved part of its users to Antigravity CLI.
 
 The hooks note every delegation to Vario's sub-agents in a local journal; `vario report` and the application's **Delegations** tab summarize it: delegations, escalations and answers without a report.
 
