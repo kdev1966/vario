@@ -1,5 +1,5 @@
 ---
-name: vario-lecteur
+name: vario-reader
 description: À utiliser de façon proactive pour lire et résumer sans rien modifier — localiser du code, extraire des champs ou des valeurs, résumer un fichier, une documentation ou la sortie volumineuse d'un outil. Ne rend qu'un résumé court.
 tools: Read, Grep, Glob
 model: haiku

@@ -1,5 +1,5 @@
 ---
-name: vario-executant
+name: vario-worker
 description: À utiliser de façon proactive pour exécuter une tâche déjà définie et cadrée — renommer, appliquer un motif connu, implémenter une modification précise, lancer une suite de commandes connues — quand la consigne donne une vérification. Pas de conception, pas de décision.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet

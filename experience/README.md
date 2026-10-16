@@ -14,12 +14,14 @@ Les trois conditions doivent être remplies. Sinon, on analyse pourquoi avant de
 
 | Fichier | Rôle |
 | --- | --- |
-| `agents/vario-lecteur.md` | sous-agent économique (`haiku`), lecture seule : lire et résumer |
-| `agents/vario-executant.md` | sous-agent intermédiaire (`sonnet`) : exécuter une tâche cadrée, vérification obligatoire |
+| `agents/vario-reader.md` | sous-agent économique (`haiku`), lecture seule : lire et résumer |
+| `agents/vario-worker.md` | sous-agent intermédiaire (`sonnet`) : exécuter une tâche cadrée, vérification obligatoire |
 | `delegation.md` | consignes pour la session principale : quand déléguer, formats, escalade |
 | `journal.md` | une ligne par délégation |
 
 Activation, faite le 16 octobre 2026 : les deux sous-agents sont copiés dans `.claude/agents/`, et le `CLAUDE.md` du projet importe `@experience/delegation.md`. Les sous-agents sont actifs en permanence pendant le test.
+
+Le 16 octobre 2026, les sous-agents ont été renommés vario-reader et vario-worker, comme ceux que Vario installe ; les lignes antérieures du journal gardent les anciens noms.
 
 ## Ce qui ne change pas pendant le test
 
