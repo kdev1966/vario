@@ -8,6 +8,19 @@ pub const ENV_LANG: &str = "VARIO_LANG";
 /// Vario's own override, then the POSIX precedence for messages.
 const VARIABLES: [&str; 5] = [ENV_LANG, "LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"];
 
+/// The text in the user's language: `tr!(lang, "Done: {count}.", "Terminé : {count}.")`.
+/// Both literals may use the same inline arguments. Every front end words its own
+/// messages with it.
+#[macro_export]
+macro_rules! tr {
+    ($lang:expr, $en:literal, $fr:literal) => {
+        match $lang {
+            $crate::lang::Lang::En => format!($en),
+            $crate::lang::Lang::Fr => format!($fr),
+        }
+    };
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lang {
     #[default]

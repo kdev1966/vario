@@ -1,0 +1,287 @@
+// Vario's interface. All logic lives in vario-core; this file only lays out what
+// main.rs gives it. Texts are translated with @tr (lang/<language>/LC_MESSAGES).
+
+import { AboutSlint, Button, CheckBox, GroupBox, HorizontalBox, Palette, StandardListView, Switch, TabWidget, VerticalBox } from "std-widgets.slint";
+
+export struct ClientRow {
+    label: string,
+    subagents: string,
+    instructions: string,
+    hooks: string,
+    handoff: string,
+    notes: string,
+}
+
+export struct Choice {
+    label: string,
+    selected: bool,
+}
+
+export struct ReportRow {
+    agent: string,
+    delegations: string,
+    escalated: string,
+    without-footer: string,
+}
+
+component Cell inherits Text {
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+component Header inherits Cell {
+    font-weight: 700;
+}
+
+component ClientTable {
+    in property <[ClientRow]> rows;
+
+    VerticalLayout {
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 12px;
+            Header { width: 120px; text: @tr("Client"); }
+            Header { width: 90px; text: @tr("Sub-agents"); }
+            Header { width: 90px; text: @tr("Instructions"); }
+            Header { width: 60px; text: @tr("Hooks"); }
+            Header { width: 110px; text: "Handoff"; }
+            Header { text: @tr("Notes"); }
+        }
+        for row in root.rows: HorizontalLayout {
+            spacing: 12px;
+            Cell { width: 120px; text: row.label; }
+            Cell { width: 90px; text: row.subagents; }
+            Cell { width: 90px; text: row.instructions; }
+            Cell { width: 60px; text: row.hooks; }
+            Cell { width: 110px; text: row.handoff; }
+            Cell { text: row.notes; wrap: word-wrap; overflow: clip; }
+        }
+    }
+}
+
+component ReportTable {
+    in property <[ReportRow]> rows;
+
+    VerticalLayout {
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 12px;
+            Header { width: 140px; text: @tr("Sub-agent"); }
+            Header { width: 100px; text: @tr("Delegations"); }
+            Header { width: 100px; text: @tr("Escalated"); }
+            Header { text: @tr("No footer"); }
+        }
+        for row in root.rows: HorizontalLayout {
+            spacing: 12px;
+            Cell { width: 140px; text: row.agent; }
+            Cell { width: 100px; text: row.delegations; }
+            Cell { width: 100px; text: row.escalated; }
+            Cell { text: row.without-footer; }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Vario";
+    preferred-width: 880px;
+    preferred-height: 580px;
+    min-width: 680px;
+    min-height: 440px;
+
+    in property <string> version;
+    // The open tab; main.rs may set it at start (VARIO_GUI_TAB, for screenshots).
+    in-out property <int> current-tab;
+
+    // Status
+    in property <[ClientRow]> clients;
+    in property <bool> needs-fix;
+    in property <string> status-message;
+    in property <string> handoff-hint;
+    property <bool> confirm-remove;
+
+    // Install
+    in-out property <bool> manual;
+    in property <[Choice]> choices;
+    in property <[StandardListViewItem]> planned;
+    in property <bool> can-apply;
+    in property <string> install-message;
+
+    // Delegations
+    in property <[ReportRow]> report-rows;
+    in property <string> report-period;
+    in property <string> journal;
+
+    callback refresh();
+    callback repair();
+    callback remove-all();
+    callback mode-changed();
+    callback toggle-choice(int, bool);
+    callback preview();
+    callback apply();
+
+    TabWidget {
+        current-index <=> root.current-tab;
+        Tab {
+            title: @tr("Status");
+            VerticalBox {
+                alignment: start;
+                padding-top: 16px;
+                Text {
+                    text: @tr("What Vario installed in each AI client on this machine.");
+                    wrap: word-wrap;
+                }
+                ClientTable { rows: root.clients; }
+                Text {
+                    text: root.status-message;
+                    wrap: word-wrap;
+                    font-weight: 600;
+                }
+                if root.handoff-hint != "": Text {
+                    text: root.handoff-hint;
+                    wrap: word-wrap;
+                    color: Palette.foreground.with-alpha(0.7);
+                }
+                HorizontalBox {
+                    alignment: start;
+                    padding: 0;
+                    Button {
+                        text: @tr("Refresh");
+                        clicked => { root.confirm-remove = false; root.refresh(); }
+                    }
+                    Button {
+                        text: @tr("Repair");
+                        primary: root.needs-fix;
+                        enabled: root.needs-fix;
+                        clicked => { root.repair(); }
+                    }
+                    Button {
+                        text: @tr("Remove Vario…");
+                        clicked => { root.confirm-remove = true; }
+                    }
+                }
+                if root.confirm-remove: GroupBox {
+                    title: @tr("Remove Vario from every client?");
+                    VerticalBox {
+                        padding: 0;
+                        Text {
+                            text: @tr("Vario's sub-agents, instructions and hooks are removed; every file is backed up first, and a new install brings them back.");
+                            wrap: word-wrap;
+                        }
+                        HorizontalBox {
+                            alignment: start;
+                            padding: 0;
+                            Button {
+                                text: @tr("Remove");
+                                clicked => { root.confirm-remove = false; root.remove-all(); }
+                            }
+                            Button {
+                                text: @tr("Cancel");
+                                clicked => { root.confirm-remove = false; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Tab {
+            title: @tr("Install");
+            VerticalBox {
+                alignment: start;
+                padding-top: 16px;
+                Text {
+                    text: @tr("Vario adds economical sub-agents and delegation guidance to your AI clients. Nothing changes before you see the changes and apply them.");
+                    wrap: word-wrap;
+                }
+                Switch {
+                    text: @tr("Manual mode: choose the clients one by one");
+                    checked <=> root.manual;
+                    toggled => { root.mode-changed(); }
+                }
+                if root.choices.length == 0: Text {
+                    text: @tr("No supported AI client was found on this machine.");
+                }
+                for choice[index] in root.choices: CheckBox {
+                    text: choice.label;
+                    checked: choice.selected;
+                    enabled: root.manual;
+                    toggled => { root.toggle-choice(index, self.checked); }
+                }
+                HorizontalBox {
+                    alignment: start;
+                    padding: 0;
+                    Button {
+                        text: @tr("See the changes");
+                        enabled: root.choices.length > 0;
+                        clicked => { root.preview(); }
+                    }
+                    Button {
+                        text: @tr("Apply");
+                        primary: true;
+                        enabled: root.can-apply;
+                        clicked => { root.apply(); }
+                    }
+                }
+                if root.planned.length > 0: StandardListView {
+                    min-height: 160px;
+                    model: root.planned;
+                }
+                Text {
+                    text: root.install-message;
+                    wrap: word-wrap;
+                    font-weight: 600;
+                }
+            }
+        }
+
+        Tab {
+            title: @tr("Delegations");
+            VerticalBox {
+                alignment: start;
+                padding-top: 16px;
+                Text {
+                    text: @tr("Each time one of Vario's sub-agents finishes, its report is noted locally. Escalations and missing report footers show where delegation falls short.");
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.report-period;
+                    font-weight: 600;
+                }
+                ReportTable { rows: root.report-rows; }
+                Text {
+                    text: root.journal;
+                    color: Palette.foreground.with-alpha(0.7);
+                    wrap: word-wrap;
+                }
+                HorizontalBox {
+                    alignment: start;
+                    padding: 0;
+                    Button {
+                        text: @tr("Refresh");
+                        clicked => { root.refresh(); }
+                    }
+                }
+            }
+        }
+
+        Tab {
+            title: @tr("About");
+            VerticalBox {
+                alignment: start;
+                padding-top: 16px;
+                Text {
+                    text: @tr("Vario {}", root.version);
+                    font-size: 20px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: @tr("Routes the simple tasks of your AI agents to cheaper models, through their own sub-agents. Local: Vario sends nothing to anyone. MIT licence.");
+                    wrap: word-wrap;
+                }
+                AboutSlint {
+                    preferred-height: 180px;
+                }
+            }
+        }
+    }
+}

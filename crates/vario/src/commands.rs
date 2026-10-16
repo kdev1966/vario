@@ -13,9 +13,11 @@ use vario_core::files::{self, Session};
 use vario_core::handoff::{self, State};
 use vario_core::install::{self, Outcome};
 use vario_core::lang::Lang;
+use vario_core::overview::{self, ClientState, Note};
 use vario_core::parts::Kind;
+use vario_core::tr;
 
-use crate::ui::{Ui, tr};
+use crate::ui::Ui;
 
 pub struct Context {
     pub env: Env,
@@ -71,7 +73,7 @@ pub fn install(
         chosen = candidates;
     }
     if chosen.is_empty() {
-        remember(ctx, &[], &declined)?;
+        Choices::remember(&ctx.data_dir, &[], &declined)?;
         ctx.ui
             .say(tr!(lang, "Nothing was changed.", "Rien n'a été modifié."));
         return Ok(true);
@@ -85,7 +87,7 @@ pub fn install(
             "Tout est déjà en place."
         ));
         if !dry_run {
-            remember(ctx, &names_of(&chosen), &declined)?;
+            Choices::remember(&ctx.data_dir, &names_of(&chosen), &declined)?;
             suggest_handoff(ctx, &chosen)?;
         }
         return Ok(true);
@@ -120,7 +122,7 @@ pub fn install(
     let mut session = Session::in_data_dir(false, &ctx.data_dir);
     let outcomes = install::apply(&mut session, &chosen, &ctx.env);
     done(&mut ctx.ui, &ctx.env.home, &outcomes, &session);
-    remember(ctx, &names_of(&chosen), &declined)?;
+    Choices::remember(&ctx.data_dir, &names_of(&chosen), &declined)?;
     suggest_handoff(ctx, &chosen)?;
     Ok(succeeded(&outcomes))
 }
@@ -174,84 +176,37 @@ pub fn remove(ctx: &mut Context, dry_run: bool, yes: bool) -> Result<bool> {
     Ok(succeeded(&outcomes))
 }
 
-/// One client in the `doctor` report.
-struct Row {
-    integration: Integration,
-    detected: bool,
-    installed: bool,
-    status: Vec<(Kind, bool)>,
-    chosen: bool,
-    declined: bool,
-    handoff: State,
-}
-
-impl Row {
-    fn complete(&self) -> bool {
-        self.status.iter().all(|(_, present)| *present)
+/// What a note asks the user to do, worded for the command line.
+fn note_text(note: Note, name: &str, lang: Lang) -> String {
+    match note {
+        Note::NotFound => tr!(lang, "client not found", "client introuvable"),
+        Note::Incomplete => tr!(
+            lang,
+            "incomplete: run 'vario doctor --fix'",
+            "incomplet : lancez « vario doctor --fix »"
+        ),
+        Note::Declined => tr!(
+            lang,
+            "declined; 'vario install --client {name}' adds it",
+            "écarté ; « vario install --client {name} » l'ajoute"
+        ),
+        Note::NotConfigured => tr!(
+            lang,
+            "not configured: run 'vario install'",
+            "non configuré : lancez « vario install »"
+        ),
+        Note::ConnectHandoff => tr!(
+            lang,
+            "connect Handoff: 'handoff doctor --fix'",
+            "connecter Handoff : « handoff doctor --fix »"
+        ),
     }
-
-    fn settled(&self) -> bool {
-        self.chosen || self.declined
-    }
-
-    fn notes(&self, lang: Lang) -> String {
-        let name = self.integration.name;
-        let mut notes = Vec::new();
-        if self.chosen && !self.detected {
-            notes.push(tr!(lang, "client not found", "client introuvable"));
-        } else if self.chosen && !self.complete() {
-            notes.push(tr!(
-                lang,
-                "incomplete: run 'vario doctor --fix'",
-                "incomplet : lancez « vario doctor --fix »"
-            ));
-        } else if self.declined {
-            notes.push(tr!(
-                lang,
-                "declined; 'vario install --client {name}' adds it",
-                "écarté ; « vario install --client {name} » l'ajoute"
-            ));
-        } else if !self.chosen {
-            notes.push(tr!(
-                lang,
-                "not configured: run 'vario install'",
-                "non configuré : lancez « vario install »"
-            ));
-        }
-        if self.handoff == State::NotConnected {
-            notes.push(tr!(
-                lang,
-                "connect Handoff: 'handoff doctor --fix'",
-                "connecter Handoff : « handoff doctor --fix »"
-            ));
-        }
-        notes.join("; ")
-    }
-}
-
-fn rows(env: &Env, choices: Option<&Choices>) -> Vec<Row> {
-    let has = |list: fn(&Choices) -> &Vec<String>, name: &str| {
-        choices.is_some_and(|choices| list(choices).iter().any(|n| n == name))
-    };
-    integrations()
-        .into_iter()
-        .map(|integration| Row {
-            detected: integration.detect(env),
-            installed: install::installed(&integration, env),
-            status: install::status(&integration, env),
-            chosen: has(|c| &c.clients, integration.name),
-            declined: has(|c| &c.declined, integration.name),
-            handoff: handoff::state(&integration, env),
-            integration,
-        })
-        .filter(|row| row.detected || row.chosen || row.installed)
-        .collect()
 }
 
 pub fn doctor(ctx: &mut Context, fix: bool, dry_run: bool, yes: bool) -> Result<bool> {
     let lang = ctx.ui.lang;
     let choices = Choices::effective(&ctx.data_dir, &ctx.env);
-    let rows = rows(&ctx.env, choices.as_ref());
+    let rows = overview::clients(&ctx.env, choices.as_ref());
     if !fix {
         if rows.is_empty() {
             no_client(&mut ctx.ui);
@@ -260,9 +215,7 @@ pub fn doctor(ctx: &mut Context, fix: bool, dry_run: bool, yes: bool) -> Result<
         doctor_table(&mut ctx.ui, &rows);
         if choices.is_none() {
             not_set_up(&mut ctx.ui);
-        } else if rows.iter().any(|row| {
-            (row.chosen && row.detected && !row.complete()) || (row.detected && !row.settled())
-        }) {
+        } else if rows.iter().any(ClientState::needs_fix) {
             ctx.ui.say(tr!(
                 lang,
                 "Something is missing: run 'vario doctor --fix' to repair it.",
@@ -629,13 +582,6 @@ fn cancelled(ui: &mut Ui) {
     ui.say(tr!(ui.lang, "Cancelled.", "Annulé."));
 }
 
-fn remember(ctx: &Context, chosen: &[String], declined: &[String]) -> Result<()> {
-    let mut choices = Choices::load(&ctx.data_dir).unwrap_or_default();
-    choices.choose(chosen);
-    choices.decline(declined);
-    choices.save(&ctx.data_dir)
-}
-
 /// Point out Handoff's state for the configured clients; the suggestion to install it
 /// is made only once.
 fn suggest_handoff(ctx: &mut Context, chosen: &[Integration]) -> Result<()> {
@@ -672,7 +618,7 @@ fn suggest_handoff(ctx: &mut Context, chosen: &[Integration]) -> Result<()> {
     choices.save(&ctx.data_dir)
 }
 
-fn doctor_table(ui: &mut Ui, rows: &[Row]) {
+fn doctor_table(ui: &mut Ui, rows: &[ClientState]) {
     let lang = ui.lang;
     let kinds: Vec<Kind> = [Kind::Subagents, Kind::Instructions, Kind::Hooks, Kind::Mcp]
         .into_iter()
@@ -700,7 +646,12 @@ fn doctor_table(ui: &mut Ui, rows: &[Row]) {
             State::NotConnected => tr!(lang, "not connected", "non connecté"),
             State::Absent => tr!(lang, "not installed", "non installé"),
         });
-        cells.push(row.notes(lang));
+        let notes: Vec<String> = row
+            .notes()
+            .into_iter()
+            .map(|note| note_text(note, row.integration.name, lang))
+            .collect();
+        cells.push(notes.join("; "));
         table.push(cells);
     }
     print_table(ui, &table);

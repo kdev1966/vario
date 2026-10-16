@@ -4,18 +4,6 @@ use std::io::{self, BufRead, IsTerminal, Write};
 
 use vario_core::lang::Lang;
 
-/// The text in the user's language: `tr!(lang, "Done: {count}.", "Terminé : {count}.")`.
-/// Both literals may use the same inline arguments.
-macro_rules! tr {
-    ($lang:expr, $en:literal, $fr:literal) => {
-        match $lang {
-            vario_core::lang::Lang::En => format!($en),
-            vario_core::lang::Lang::Fr => format!($fr),
-        }
-    };
-}
-pub(crate) use tr;
-
 pub struct Ui {
     input: Box<dyn BufRead>,
     out: Box<dyn Write>,

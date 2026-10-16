@@ -9,6 +9,7 @@ pub mod handoff;
 pub mod hooks;
 pub mod install;
 pub mod lang;
+pub mod overview;
 pub mod parts;
 pub mod paths;
 pub mod report;
