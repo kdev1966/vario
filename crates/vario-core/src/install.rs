@@ -77,6 +77,13 @@ fn outcome(
     }
 }
 
+/// Whether Vario is installed in this client: its sub-agent files, which belong to
+/// this client alone, are in place. A shared file such as `CLAUDE.md`, which OpenCode
+/// also reads, does not count: another client may have filled it.
+pub fn installed(integration: &Integration, env: &Env) -> bool {
+    status(integration, env).contains(&(Kind::Subagents, true))
+}
+
 /// For each kind this client supports: whether everything of that kind is in place.
 pub fn status(integration: &Integration, env: &Env) -> Vec<(Kind, bool)> {
     let mut result: Vec<(Kind, bool)> = Vec::new();

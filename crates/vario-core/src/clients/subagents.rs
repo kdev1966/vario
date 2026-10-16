@@ -62,6 +62,28 @@ You carry out a task defined by the main session. You change neither its goal no
     ]
 }
 
+/// The guidance injected at session start where a client has no global instructions
+/// file (Cursor). At most 1,000 characters, about 250 tokens: Handoff already injects
+/// the project's memory at the same moment.
+pub const SESSION_CONTEXT: &str = "\
+Vario: delegate to economical sub-agents. Keep design, debugging, trade-offs and review \
+in this session. Reading and summarizing → vario-reader. A well-defined task with a check \
+→ vario-worker. Always keep here: security-sensitive or destructive changes, ambiguous \
+requests, anything that needs the user's judgment. Brief with pointers, never pasted \
+content: GOAL, INPUTS (files and lines), CONSTRAINTS, CHECK. A failed check → retry once \
+one level up (vario-reader → vario-worker; vario-worker → do it here).";
+
+/// Whether `name` is one of Vario's sub-agents.
+pub fn is_ours(name: &str) -> bool {
+    all().iter().any(|subagent| subagent.name == name)
+}
+
+/// A regular expression matching exactly Vario's sub-agents, for hook matchers.
+pub fn matcher() -> String {
+    let names: Vec<&str> = all().iter().map(|subagent| subagent.name).collect();
+    format!("^({})$", names.join("|"))
+}
+
 /// A double-quoted YAML scalar, safe whatever the text holds (`: `, `#`, quotes).
 pub(super) fn yaml_string(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
@@ -91,3 +113,23 @@ CHECK: <command or criterion that proves success>
 ```
 
 \"ESCALATE: yes\" is only a hint. A failed check → retry once one level up (`vario-reader` → `vario-worker`, read-only; `vario-worker` → do it here). With no possible check, review the result; if it falls short, do it here.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_session_context_stays_within_its_budget() {
+        assert!(SESSION_CONTEXT.chars().count() <= 1000);
+        assert!(
+            !SESSION_CONTEXT.contains("  "),
+            "line continuations leave no double space"
+        );
+    }
+
+    #[test]
+    fn the_matcher_names_every_sub_agent() {
+        assert_eq!(matcher(), "^(vario-reader|vario-worker)$");
+        assert!(is_ours("vario-worker") && !is_ours("Explore"));
+    }
+}

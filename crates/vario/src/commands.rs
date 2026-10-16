@@ -178,6 +178,7 @@ pub fn remove(ctx: &mut Context, dry_run: bool, yes: bool) -> Result<bool> {
 struct Row {
     integration: Integration,
     detected: bool,
+    installed: bool,
     status: Vec<(Kind, bool)>,
     chosen: bool,
     declined: bool,
@@ -185,10 +186,6 @@ struct Row {
 }
 
 impl Row {
-    fn configured(&self) -> bool {
-        self.status.iter().any(|(_, present)| *present)
-    }
-
     fn complete(&self) -> bool {
         self.status.iter().all(|(_, present)| *present)
     }
@@ -240,13 +237,14 @@ fn rows(env: &Env, choices: Option<&Choices>) -> Vec<Row> {
         .into_iter()
         .map(|integration| Row {
             detected: integration.detect(env),
+            installed: install::installed(&integration, env),
             status: install::status(&integration, env),
             chosen: has(|c| &c.clients, integration.name),
             declined: has(|c| &c.declined, integration.name),
             handoff: handoff::state(&integration, env),
             integration,
         })
-        .filter(|row| row.detected || row.chosen || row.configured())
+        .filter(|row| row.detected || row.chosen || row.installed)
         .collect()
 }
 
@@ -798,7 +796,7 @@ mod tests {
         assert!(install(&mut ctx, false, &[], false, false).unwrap());
         let text = out.text();
         assert!(text.contains("Apply these changes? [Y/n]"), "{text}");
-        assert!(text.contains("Done: 3 change(s)."), "{text}");
+        assert!(text.contains("Done: 4 change(s)."), "{text}");
         assert!(text.contains("Backups: "), "{text}");
         assert!(fx.claude("agents/vario-worker.md").is_file());
         assert_eq!(Choices::load(&fx.data_dir).unwrap().clients, ["claude"]);
@@ -807,14 +805,18 @@ mod tests {
         doctor(&mut ctx, false, false, false).unwrap();
         let text = out.text();
         assert!(
-            text.contains("Client       Sub-agents  Instructions  Handoff"),
+            text.contains("Client       Sub-agents  Instructions  Hooks  Handoff"),
             "{text}"
         );
         assert!(
-            text.contains("Claude Code  ✔           ✔             not installed"),
+            text.contains("Claude Code  ✔           ✔             ✔      not installed"),
             "{text}"
         );
         assert!(!text.contains("Something is missing"), "{text}");
+        assert!(
+            !text.contains("OpenCode"),
+            "Vario's block in CLAUDE.md, which OpenCode also reads, does not make it installed there: {text}"
+        );
 
         fs::remove_file(fx.claude("agents/vario-reader.md")).unwrap();
         let (mut ctx, out) = fx.ctx("", false);
@@ -868,7 +870,7 @@ mod tests {
 
         let (mut ctx, out) = fx.ctx("", false);
         assert!(restore(&mut ctx, None, true, false).unwrap());
-        assert!(out.text().contains("(3 files)"), "{}", out.text());
+        assert!(out.text().contains("(4 files)"), "{}", out.text());
 
         let (mut ctx, out) = fx.ctx("\n", true);
         assert!(
@@ -917,13 +919,13 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Appliquer ces changements ? [O/n]"), "{text}");
-        assert!(text.contains("Terminé : 3 changement(s)."), "{text}");
+        assert!(text.contains("Terminé : 4 changement(s)."), "{text}");
 
         let (mut ctx, out) = fx.with_ui(scripted_in(Lang::Fr, "", false));
         doctor(&mut ctx, false, false, false).unwrap();
         let text = out.text();
         assert!(
-            text.contains("Client       Sous-agents  Consignes  Handoff       Remarques"),
+            text.contains("Client       Sous-agents  Consignes  Hooks  Handoff       Remarques"),
             "{text}"
         );
         assert!(text.contains("non installé"), "{text}");

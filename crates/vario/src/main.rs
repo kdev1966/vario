@@ -3,11 +3,14 @@
 mod commands;
 mod ui;
 
+use std::ffi::OsString;
+use std::io::{self, IsTerminal, Read, Write};
 use std::process::ExitCode;
 
 use clap::builder::PossibleValuesParser;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use vario_core::clients::{Env, integrations};
+use vario_core::hooks::{self, Event, Via};
 use vario_core::lang::Lang;
 use vario_core::paths;
 
@@ -132,7 +135,36 @@ fn command_line(lang: Lang) -> clap::Command {
         })
 }
 
+/// `vario hook <event> --via <client>`, run by the clients. It is handled before the
+/// command-line parser: a parse error exits with status 2, which Claude Code reads as
+/// "keep the sub-agent running". Whatever happens, a hook exits with status 0.
+fn hook(args: &[OsString]) -> ExitCode {
+    let arg = |index: usize| args.get(index).and_then(|arg| arg.to_str());
+    let event = arg(2).and_then(Event::parse);
+    let via = args
+        .iter()
+        .position(|arg| arg == "--via")
+        .and_then(|index| arg(index + 1))
+        .and_then(Via::parse);
+    let (Some(event), Some(via)) = (event, via) else {
+        return ExitCode::SUCCESS;
+    };
+    let mut input = String::new();
+    if !io::stdin().is_terminal() {
+        let _ = io::stdin().take(4 << 20).read_to_string(&mut input);
+    }
+    let output = hooks::run(event, via, &input, &Env::current(), &paths::data_dir());
+    let mut stdout = io::stdout();
+    let _ = stdout.write_all(output.as_bytes());
+    let _ = stdout.flush();
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    if args.get(1).is_some_and(|arg| arg == "hook") {
+        return hook(&args);
+    }
     let env = Env::current();
     let lang = Lang::detect(&env);
     let cli =

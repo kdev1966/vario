@@ -22,6 +22,8 @@ use crate::paths;
 pub struct Env {
     pub home: PathBuf,
     pub vars: HashMap<String, OsString>,
+    /// The `vario` executable that hook commands run; empty means `vario` on `PATH`.
+    pub exe: PathBuf,
 }
 
 impl Env {
@@ -31,7 +33,22 @@ impl Env {
             vars: env::vars_os()
                 .map(|(name, value)| (name.to_string_lossy().into_owned(), value))
                 .collect(),
+            exe: env::current_exe().unwrap_or_default(),
         }
+    }
+
+    /// The command a client runs for a hook: `<exe> hook <event> --via <client>`. The
+    /// absolute path keeps working when `PATH` differs in the client's environment.
+    pub fn hook_command(&self, event: &str, via: &str) -> String {
+        let exe = self.exe.to_string_lossy();
+        let program = if exe.is_empty() {
+            "vario".to_string()
+        } else if exe.contains([' ', '"', '\'']) {
+            format!("\"{exe}\"")
+        } else {
+            exe.into_owned()
+        };
+        format!("{program} hook {event} --via {via}")
     }
 
     /// A variable's value; an empty value counts as unset.

@@ -141,7 +141,21 @@ fn json_hooks_set_defaults_and_drop_emptied_events() {
         json!({"version": 1, "hooks": {"Stop": [{"command": "vario hook --via cursor stop"}]}})
     );
     part.remove(&mut session(dir.path())).unwrap();
-    assert_eq!(load(&path), json!({"version": 1, "hooks": {}}));
+    assert!(
+        !path.exists(),
+        "a file holding only Vario's hooks and defaults is deleted"
+    );
+
+    write_json(
+        &path,
+        json!({"version": 1, "hooks": {"stop": [{"command": "mine"}]}}),
+    );
+    part.apply(&mut session(dir.path())).unwrap();
+    part.remove(&mut session(dir.path())).unwrap();
+    assert_eq!(
+        load(&path),
+        json!({"version": 1, "hooks": {"stop": [{"command": "mine"}]}})
+    );
 }
 
 #[test]
@@ -202,4 +216,48 @@ fn dry_run_changes_nothing_but_reports() {
     mcp_entry(&path).apply(&mut dry).unwrap();
     assert!(!path.exists());
     assert_eq!(dry.changes().len(), 1);
+}
+
+#[test]
+fn vario_hook_commands_are_recognized_by_their_program() {
+    use vario_core::parts::is_vario_hook_command;
+    assert!(is_vario_hook_command(
+        "vario hook subagent-stop --via claude"
+    ));
+    assert!(is_vario_hook_command(
+        "/usr/local/bin/vario hook session-start --via cursor"
+    ));
+    assert!(is_vario_hook_command(
+        r#""/Users/ana b/bin/vario" hook session-start --via cursor"#
+    ));
+    assert!(is_vario_hook_command(
+        r#""C:\Program Files\Vario\vario.exe" hook subagent-stop --via cursor"#
+    ));
+    assert!(!is_vario_hook_command(
+        "python -m ai_handoff hook claude stop"
+    ));
+    assert!(!is_vario_hook_command("/opt/notvario hook stop"));
+    assert!(!is_vario_hook_command("vario install"));
+}
+
+#[test]
+fn json_hooks_are_present_only_with_the_exact_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hooks.json");
+    let old = json!({"command": "/old/place/vario hook stop --via cursor"});
+    stop_hooks(&path, old)
+        .apply(&mut session(dir.path()))
+        .unwrap();
+    let current = stop_hooks(
+        &path,
+        json!({"command": "/new/vario hook stop --via cursor"}),
+    );
+    assert!(!current.present(), "a moved binary is reported as missing");
+    current.apply(&mut session(dir.path())).unwrap();
+    assert!(current.present());
+    assert_eq!(
+        load(&path),
+        json!({"hooks": {"Stop": [{"command": "/new/vario hook stop --via cursor"}]}}),
+        "the old entry is replaced, not kept beside the new one"
+    );
 }
