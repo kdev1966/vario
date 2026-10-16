@@ -306,7 +306,9 @@ impl Part for OwnFile {
         session.delete(&self.path, Action::Deleted)
     }
 
+    /// The exact content: a file written by an older Vario, or naming a moved binary,
+    /// counts as missing, so `doctor --fix` rewrites it.
     fn present(&self) -> bool {
-        self.path.is_file() && self.owned().unwrap_or(false)
+        files::read_text(&self.path).is_ok_and(|text| text == self.content)
     }
 }

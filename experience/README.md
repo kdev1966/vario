@@ -27,6 +27,10 @@ Le 16 octobre 2026, les sous-agents ont été renommés vario-reader et vario-wo
 
 La configuration globale (`~/.claude/CLAUDE.md`, serveurs MCP) et le modèle de la session principale (Opus 5.5). Sinon, on ne saura pas ce qui a fait varier la consommation.
 
+**Écart décidé le 16 octobre 2026 vers 19 h 35** : pour tester Vario sans attendre la fin du test, l'utilisateur a fait installer Vario sur la machine (`vario install`, Claude Code et OpenCode). La configuration globale a donc changé : sous-agents `vario-reader` et `vario-worker` dans `~/.claude/agents/`, bloc de consignes Vario dans `~/.claude/CLAUDE.md`, hook `SubagentStop` dans `~/.claude/settings.json`. Dans ce projet, les sous-agents du projet, de mêmes noms, gardent la priorité. La comparaison de consommation avant et après doit en tenir compte : à partir de cette heure, la délégation est conseillée dans tous les projets, pas seulement dans celui-ci.
+
+Depuis cette installation, le hook note aussi chaque délégation à `vario-reader` ou `vario-worker` dans le journal de Vario (`vario report`), en plus du tableau ci-dessous.
+
 ## Mesures
 
 - **Pendant le test** : la session principale ajoute une ligne à `journal.md` après chaque délégation. Ce coût en tokens est faible, mais il compte dans la mesure.
