@@ -11,8 +11,16 @@ readme.workspace = true
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-slint = "1.18"
+# The winit integration (unstable, hence the ~1.18 pin) makes the gauge a floating
+# system window: its level, its taskbar entry, the macOS activation policy.
+slint = { version = "~1.18", features = ["unstable-winit-030"] }
 vario-core = { path = "../vario-core" }
+
+# macOS: the gauge joins every Space (NSWindow.collectionBehavior), which winit does
+# not offer. The versions are the ones Slint already builds.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3"
 
 [dev-dependencies]
 # Runs the window without a screen, so the tests can drive it.

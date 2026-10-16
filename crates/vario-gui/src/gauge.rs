@@ -126,6 +126,69 @@ pub fn feed(gauge: &GaugeWindow, env: Env, data_dir: PathBuf, lang: Lang) {
     });
 }
 
+/// Make the shown gauge a floating system window: above other applications' windows,
+/// on every desktop (macOS Spaces, full-screen apps included), and out of the
+/// Windows taskbar. Call it after `show()`, once the system window exists.
+pub fn float(gauge: &GaugeWindow) {
+    use slint::winit_030::WinitWindowAccessor;
+    use slint::winit_030::winit::window::WindowLevel;
+    gauge.window().with_winit_window(|window| {
+        window.set_window_level(WindowLevel::AlwaysOnTop);
+        #[cfg(target_os = "windows")]
+        {
+            use slint::winit_030::winit::platform::windows::WindowExtWindows;
+            window.set_skip_taskbar(true);
+        }
+        #[cfg(target_os = "macos")]
+        macos::join_every_space(window);
+    });
+}
+
+/// Run as a desktop widget: on macOS, no Dock icon and no place in the app switcher.
+/// Must run before any window is created.
+pub fn select_widget_backend() -> Result<(), slint::PlatformError> {
+    #[cfg(target_os = "macos")]
+    {
+        use slint::winit_030::winit::event_loop::EventLoop;
+        use slint::winit_030::winit::platform::macos::{
+            ActivationPolicy, EventLoopBuilderExtMacOS,
+        };
+        let mut builder = EventLoop::with_user_event();
+        builder.with_activation_policy(ActivationPolicy::Accessory);
+        slint::BackendSelector::new()
+            .with_winit_event_loop_builder(builder)
+            .select()?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)] // one pointer cast, see below; the crate otherwise denies unsafe
+mod macos {
+    use objc2_app_kit::{NSView, NSWindowCollectionBehavior};
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use slint::winit_030::winit::window::Window;
+
+    /// NSWindow.collectionBehavior: shown on every Space and over full-screen apps.
+    pub fn join_every_space(window: &Window) {
+        let Ok(handle) = window.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return;
+        };
+        // SAFETY: winit hands out the NSView of a window it owns, alive for as long as
+        // `window` is borrowed, and this runs on the event loop's (main) thread.
+        let view: &NSView = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+        if let Some(ns_window) = view.window() {
+            ns_window.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

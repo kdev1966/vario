@@ -39,7 +39,7 @@ The hooks note every delegation to Vario's sub-agents in a local journal; `vario
 
 Claude Code runs status lines in the terminal only: the quota is read while you use Claude Code in a terminal, not from the VS Code extension. The rest (sub-agents, guidance, journal, `vario usage`) works everywhere.
 
-**Floating gauge.** `vario-gui --gauge`, or **Floating gauge** in the application, opens a small always-on-top window drawn like an audio plugin: a needle meter for the 5-hour quota, a bar meter for the 7-day quota, the thermostat's state as mode buttons, and knobs for the share delegated and the escalation rate. Drag it by its header.
+**Floating gauge.** `vario-gui --gauge`, or **Floating gauge** in the application, opens a floating, borderless system window drawn like an audio plugin: above other applications, on every desktop (and over full-screen apps on macOS), with no Dock icon or taskbar entry in `--gauge` mode. It shows a needle meter for the 5-hour quota, a bar meter for the 7-day quota, the thermostat's state as mode buttons, and knobs for the share delegated and the escalation rate. Drag it from anywhere.
 
 ## Install
 

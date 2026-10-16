@@ -141,7 +141,8 @@ export component GaugeWindow inherits Window {
     always-on-top: true;
     width: 330px;
     height: 540px;
-    background: #7d7a98;
+    // A floating widget: only the rounded panel shows, the window itself is clear.
+    background: transparent;
 
     in property <float> five-hour: -1;
     in property <string> five-hour-reset;
@@ -167,12 +168,21 @@ export component GaugeWindow inherits Window {
         return value < 0 ? "—" : round(value) + " %";
     }
 
-    // Header: the logo, readouts, close; dragging it moves the window.
+    // The panel, and a move area under everything: the gauge is dragged from anywhere
+    // but its two buttons.
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        border-radius: 18px;
+        background: #7d7a98;
+        border-width: 1px;
+        border-color: #5f5c7a;
+    }
     WindowMoveArea {
         x: 0;
         y: 0;
         width: root.width;
-        height: 78px;
+        height: root.height;
     }
     // The logo: a V in a triangle, then the name.
     Path {
