@@ -1,123 +1,7 @@
 // The floating gauge: a slim, dark channel strip, like an audio plugin's meter, narrow
-// enough to sit beside a code editor. Everything is drawn as vectors, so it stays sharp
-// at any resolution (Full HD, 4K, Retina). Values below 0 mean "not known yet".
+// enough to sit beside a code editor. Values below 0 mean "not known yet".
 
-// Palette.
-global Theme {
-    out property <color> panel-top: #1e1f25;
-    out property <color> panel-bottom: #121317;
-    out property <color> plate: #17181d;
-    out property <color> edge: #2d2f38;
-    out property <color> text: #e9eaef;
-    out property <color> muted: #8a8d99;
-    out property <color> amber: #e3a23b;
-    out property <color> red: #e2553f;
-    out property <color> green: #47c08a;
-    out property <color> unlit: #25262e;
-}
-
-// Small capital labels, as engraved on a front panel.
-component Caption inherits Text {
-    color: Theme.muted;
-    font-size: 8px;
-    font-weight: 700;
-    letter-spacing: 0.8px;
-    horizontal-alignment: center;
-    // Room above capitals: Slint cuts a text at its own height (É, À).
-    height: 12px;
-    vertical-alignment: bottom;
-}
-
-// A recessed plate grouping one instrument.
-component Plate inherits Rectangle {
-    border-radius: 7px;
-    background: Theme.plate;
-    border-width: 1px;
-    border-color: Theme.edge;
-}
-
-// A small knob: an amber arc over 270 degrees, the value inside, the caption below.
-component Knob {
-    in property <float> value;
-    in property <string> caption;
-    in property <string> shown;
-    property <float> r: 22;
-    property <angle> start: -135deg;
-    property <angle> end: -135deg + 270deg * clamp(root.value, 0, 100) / 100;
-    width: 60px;
-    height: 74px;
-
-    // Track, then value.
-    Path {
-        x: 0;
-        y: 0;
-        width: 60px;
-        height: 60px;
-        viewbox-width: 60;
-        viewbox-height: 60;
-        stroke: Theme.unlit;
-        stroke-width: 4px;
-        MoveTo {
-            x: 30 + root.r * sin(root.start);
-            y: 30 - root.r * cos(root.start);
-        }
-        ArcTo {
-            x: 30 + root.r * sin(135deg);
-            y: 30 - root.r * cos(135deg);
-            radius-x: root.r;
-            radius-y: root.r;
-            sweep: true;
-            large-arc: true;
-        }
-    }
-    if root.value > 0.5: Path {
-        x: 0;
-        y: 0;
-        width: 60px;
-        height: 60px;
-        viewbox-width: 60;
-        viewbox-height: 60;
-        stroke: Theme.amber;
-        stroke-width: 4px;
-        MoveTo {
-            x: 30 + root.r * sin(root.start);
-            y: 30 - root.r * cos(root.start);
-        }
-        ArcTo {
-            x: 30 + root.r * sin(root.end);
-            y: 30 - root.r * cos(root.end);
-            radius-x: root.r;
-            radius-y: root.r;
-            sweep: true;
-            large-arc: root.end - root.start > 180deg;
-        }
-    }
-    // The cap, lit from above.
-    Rectangle {
-        x: 13px;
-        y: 13px;
-        width: 34px;
-        height: 34px;
-        border-radius: 17px;
-        background: @radial-gradient(circle, #3a3c46 0%, #24252c 70%, #1b1c22 100%);
-        border-width: 1px;
-        border-color: #0d0e11;
-        Text {
-            text: root.shown;
-            color: Theme.text;
-            font-size: 10px;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-    }
-    Caption {
-        x: 0;
-        y: 60px;
-        width: 60px;
-        text: root.caption;
-    }
-}
+import { Theme, Caption, Plate, Panel, Logo, CloseButton, Lamp, Knob } from "theme.slint";
 
 export component GaugeWindow inherits Window {
     title: "Vario";
@@ -155,13 +39,9 @@ export component GaugeWindow inherits Window {
 
     // The panel, and a move area under everything: the gauge is dragged from anywhere
     // but its two buttons.
-    Rectangle {
+    Panel {
         width: root.width;
         height: root.height;
-        border-radius: 14px;
-        background: @linear-gradient(180deg, Theme.panel-top 0%, Theme.panel-bottom 100%);
-        border-width: 1px;
-        border-color: Theme.edge;
     }
     WindowMoveArea {
         width: root.width;
@@ -169,32 +49,14 @@ export component GaugeWindow inherits Window {
     }
 
     // Header.
-    Text {
+    Logo {
         x: 12px;
         y: 9px;
-        text: "Vario";
-        color: Theme.amber;
-        font-size: 17px;
-        font-weight: 800;
-        font-italic: true;
     }
-    Rectangle {
+    CloseButton {
         x: root.width - 26px;
         y: 10px;
-        width: 16px;
-        height: 16px;
-        border-radius: 8px;
-        background: close-area.has-hover ? Theme.red : #2a2b33;
-        Text {
-            text: "×";
-            color: Theme.text;
-            font-size: 11px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        close-area := TouchArea {
-            clicked => { root.close-gauge(); }
-        }
+        clicked => { root.close-gauge(); }
     }
 
     // The needle meter, for the 5-hour quota.
@@ -389,16 +251,11 @@ export component GaugeWindow inherits Window {
             y: 20px + index * 15px;
             width: 114px;
             height: 13px;
-            // The lamp, with a glow when lit.
-            Rectangle {
+            Lamp {
                 x: 0;
                 y: 2px;
-                width: 9px;
-                height: 9px;
-                border-radius: 4.5px;
-                background: parent.lit ? state.color : Theme.unlit;
-                drop-shadow-blur: parent.lit ? 6px : 0;
-                drop-shadow-color: state.color;
+                lit: parent.lit;
+                tint: state.color;
             }
             Text {
                 x: 16px;
