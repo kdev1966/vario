@@ -6,6 +6,7 @@ use vario_core::Error;
 use vario_core::clients::{Env, by_name, subagents};
 use vario_core::error::Reason;
 use vario_core::files::{BLOCK_BEGIN, Session, restore};
+#[cfg(unix)] // only the tests that put a `handoff` executable on PATH use it
 use vario_core::handoff::{self, State};
 use vario_core::install;
 use vario_core::parts::Kind;
