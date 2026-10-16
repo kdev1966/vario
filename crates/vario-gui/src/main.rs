@@ -36,8 +36,13 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut env = Env::current();
     env.exe = command_line_path(&env);
     let lang = Lang::detect(&env);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(answer) = answer_in_terminal(&args, lang) {
+        println!("{answer}");
+        return Ok(());
+    }
     // `vario-gui --gauge`: the floating gauge alone, as a desktop widget.
-    if std::env::args().any(|arg| arg == "--gauge") {
+    if args.iter().any(|arg| arg == "--gauge") {
         gauge::select_widget_backend()?;
         let gauge = open_gauge(env.clone(), paths::data_dir(), lang)?;
         gauge.on_close_gauge(|| {
@@ -483,6 +488,31 @@ impl App {
     }
 }
 
+/// `--version` and `--help` answer in the terminal instead of opening a window.
+fn answer_in_terminal(args: &[String], lang: Lang) -> Option<String> {
+    let has = |names: [&str; 2]| args.iter().any(|arg| names.contains(&arg.as_str()));
+    if has(["--version", "-V"]) {
+        return Some(format!("vario-gui {}", env!("CARGO_PKG_VERSION")));
+    }
+    has(["--help", "-h"]).then(|| {
+        tr!(
+            lang,
+            "Vario's window: install, check, repair and remove Vario.\n\n\
+             Usage: vario-gui [--gauge]\n\n\
+             Options:\n  \
+             --gauge        the floating quota gauge alone\n  \
+             -h, --help     this help\n  \
+             -V, --version  the version",
+            "La fenêtre de Vario : installer, vérifier, réparer et retirer Vario.\n\n\
+             Utilisation : vario-gui [--gauge]\n\n\
+             Options :\n  \
+             --gauge        la jauge de quota flottante seule\n  \
+             -h, --help     cette aide\n  \
+             -V, --version  la version"
+        )
+    })
+}
+
 fn note_text(note: Note, lang: Lang) -> String {
     match note {
         Note::NotFound => tr!(lang, "client not found", "client introuvable"),
@@ -566,6 +596,20 @@ mod tests {
         fn claude(&self) -> PathBuf {
             self.env.home.join(".claude")
         }
+    }
+
+    #[test]
+    fn version_and_help_answer_without_a_window() {
+        let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            answer_in_terminal(&args(&["--version"]), Lang::En).as_deref(),
+            Some(concat!("vario-gui ", env!("CARGO_PKG_VERSION")))
+        );
+        let help = answer_in_terminal(&args(&["-h"]), Lang::Fr).unwrap();
+        assert!(help.starts_with("La fenêtre de Vario"));
+        assert!(help.contains("--gauge"));
+        assert_eq!(answer_in_terminal(&args(&["--gauge"]), Lang::En), None);
+        assert_eq!(answer_in_terminal(&[], Lang::En), None);
     }
 
     #[test]

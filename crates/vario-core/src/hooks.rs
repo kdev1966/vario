@@ -25,6 +25,10 @@ const LOG: &str = "hooks.log";
 const LOG_LIMIT: u64 = 1 << 20;
 /// Longest text kept from a footer field.
 const FIELD_LIMIT: usize = 300;
+/// How far apart a host may report the same sub-agent's end twice, in seconds.
+const REPEAT_WINDOW: i64 = 600;
+/// The journal's last lines that a new entry is compared with.
+pub(crate) const REPEAT_LOOKBACK: usize = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -246,7 +250,42 @@ fn record(
         "tokens": input.get("tokens"),
         "project": project,
     });
-    append(&data_dir.join(JOURNAL), &format!("{entry}\n"))
+    let path = data_dir.join(JOURNAL);
+    let recent = fs::read_to_string(&path).unwrap_or_default();
+    let repeated = recent
+        .lines()
+        .rev()
+        .take(REPEAT_LOOKBACK)
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .any(|earlier| repeats(&entry, &earlier));
+    if repeated {
+        return Ok(());
+    }
+    append(&path, &format!("{entry}\n"))
+}
+
+/// Whether a journal entry repeats an earlier one. A host can report one sub-agent's
+/// end twice: Claude Code runs `SubagentStop` again when it makes a background
+/// sub-agent hand its report back through a tool, and both carry the same report.
+/// Entries without a report are never repeats, since nothing tells them apart.
+pub(crate) fn repeats(entry: &Value, earlier: &Value) -> bool {
+    const SAME: [&str; 8] = [
+        "client",
+        "agent",
+        "project",
+        "result",
+        "checks",
+        "uncertainties",
+        "escalate",
+        "reason",
+    ];
+    let time =
+        |entry: &Value| chrono::DateTime::parse_from_rfc3339(entry.get("time")?.as_str()?).ok();
+    !entry.get("result").is_none_or(Value::is_null)
+        && SAME.iter().all(|key| entry.get(key) == earlier.get(key))
+        && time(entry)
+            .zip(time(earlier))
+            .is_some_and(|(a, b)| (a - b).num_seconds().abs() <= REPEAT_WINDOW)
 }
 
 /// The report footer every Vario sub-agent ends with, in English or French.
@@ -444,6 +483,44 @@ mod tests {
     }
 
     #[test]
+    fn the_same_report_twice_is_journaled_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let env = env_in(dir.path());
+        let stop = |message: &str| {
+            let input = json!({
+                "cwd": "/work/vario",
+                "agent_type": "vario-worker",
+                "last_assistant_message": message,
+            });
+            run(
+                Event::SubagentStop,
+                Via::Claude,
+                &input.to_string(),
+                &env,
+                &data,
+            );
+        };
+        stop("RESULT: ok\nCHECKS: cargo test");
+        stop("RESULT: ok\nCHECKS: cargo test");
+        assert_eq!(journal(&data).len(), 1);
+        // A different report, or none at all, is a delegation of its own.
+        stop("RESULT: ok\nCHECKS: cargo clippy");
+        stop("no footer");
+        stop("no footer");
+        assert_eq!(journal(&data).len(), 4);
+    }
+
+    #[test]
+    fn repeats_only_within_the_window() {
+        let entry = |time: &str| json!({"time": time, "agent": "vario-reader", "result": "ok"});
+        let first = entry("2026-10-16T22:22:58+01:00");
+        assert!(repeats(&entry("2026-10-16T22:23:04+01:00"), &first));
+        assert!(!repeats(&entry("2026-10-16T22:40:00+01:00"), &first));
+        assert!(!repeats(&entry("not a time"), &first));
+    }
+
+    #[test]
     fn a_report_handed_back_through_a_tool_is_read_from_the_transcript() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
@@ -541,6 +618,7 @@ mod tests {
         let cursor = by_name("cursor").unwrap();
         let mut session = crate::files::Session::with_backup_dir(false, dir.path().join("b"));
         install::apply(&mut session, &[cursor], &env);
+        let input = input.replace("RESULT: listed", "RESULT: listed again");
         run(Event::SubagentStop, Via::Claude, &input, &env, &data);
         assert_eq!(journal(&data).len(), 1, "the Claude Code copy stood aside");
         run(Event::SubagentStop, Via::Cursor, &input, &env, &data);
