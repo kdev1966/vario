@@ -65,6 +65,8 @@ enum Command {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Summarize the delegations journaled by the hooks.
+    Report,
     /// Put back the files as they were before a change by Vario.
     Restore {
         /// Backup folder, by name or path; the most recent one by default.
@@ -122,6 +124,9 @@ fn command_line(lang: Lang) -> clap::Command {
                 .mut_arg("yes", |arg| {
                     arg.help("Avec --fix : ne pas demander de confirmation.")
                 })
+        })
+        .mut_subcommand("report", |sub| {
+            sub.about("Résumer les délégations notées par les hooks.")
         })
         .mut_subcommand("restore", |sub| {
             sub.about("Remettre les fichiers comme avant un changement fait par Vario.")
@@ -183,6 +188,7 @@ fn main() -> ExitCode {
         } => commands::install(&mut ctx, manual, &clients, dry_run, yes),
         Command::Remove { dry_run, yes } => commands::remove(&mut ctx, dry_run, yes),
         Command::Doctor { fix, dry_run, yes } => commands::doctor(&mut ctx, fix, dry_run, yes),
+        Command::Report => commands::report(&mut ctx),
         Command::Restore { backup, list, yes } => {
             commands::restore(&mut ctx, backup.as_deref(), list, yes)
         }
