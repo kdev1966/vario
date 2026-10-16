@@ -38,6 +38,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let lang = Lang::detect(&env);
     // `vario-gui --gauge`: the floating gauge alone, as a desktop widget.
     if std::env::args().any(|arg| arg == "--gauge") {
+        gauge::select_widget_backend()?;
         let gauge = open_gauge(env.clone(), paths::data_dir(), lang)?;
         gauge.on_close_gauge(|| {
             let _ = slint::quit_event_loop();
@@ -53,6 +54,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
         gauge.show()?;
+        gauge::float(&gauge);
         return slint::run_event_loop();
     }
     let (window, _app) = open(env, paths::data_dir(), lang)?;
@@ -177,6 +179,7 @@ impl App {
         }
         if let Some(gauge) = &self.gauge {
             let _ = gauge.show();
+            gauge::float(gauge);
         }
     }
 
