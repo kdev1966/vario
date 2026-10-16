@@ -39,7 +39,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // `vario-gui --gauge`: the floating gauge alone, as a desktop widget.
     if std::env::args().any(|arg| arg == "--gauge") {
         let gauge = open_gauge(env.clone(), paths::data_dir(), lang)?;
-        gauge.on_close(|| {
+        gauge.on_close_gauge(|| {
             let _ = slint::quit_event_loop();
         });
         let main_window: Rc<RefCell<Option<MainWindow>>> = Rc::default();
@@ -168,7 +168,7 @@ impl App {
                 return;
             };
             let weak = gauge.as_weak();
-            gauge.on_close(move || {
+            gauge.on_close_gauge(move || {
                 if let Some(gauge) = weak.upgrade() {
                     let _ = gauge.hide();
                 }
