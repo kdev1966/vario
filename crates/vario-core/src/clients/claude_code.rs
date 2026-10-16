@@ -1,13 +1,16 @@
 //! Claude Code: sub-agents in `<config>/agents/*.md` (YAML header with a `model`
-//! alias) and the delegation guidance in `<config>/CLAUDE.md`, for every project.
+//! alias), the delegation guidance in `<config>/CLAUDE.md`, and a `SubagentStop` hook
+//! in `<config>/settings.json` that journals each delegation, for every project.
 //! `<config>` is `$CLAUDE_CONFIG_DIR`, or `~/.claude`.
 
 use std::path::PathBuf;
 
+use serde_json::{Map, json};
+
 use super::subagents::{self, MARKER, Subagent, Tier, yaml_string};
 use super::{Env, Integration, has_mcp_server};
 use crate::handoff;
-use crate::parts::{Kind, MarkdownBlock, OwnFile, Part};
+use crate::parts::{JsonHooks, Kind, MarkdownBlock, OwnFile, Part};
 
 pub fn integration() -> Integration {
     Integration {
@@ -64,6 +67,23 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
     parts.push(Box::new(MarkdownBlock {
         path: dir.join("CLAUDE.md"),
         body: subagents::INSTRUCTIONS.into(),
+    }));
+    parts.push(Box::new(JsonHooks {
+        path: dir.join("settings.json"),
+        keys: vec!["hooks".into()],
+        entries: vec![(
+            "SubagentStop".into(),
+            json!({
+                "matcher": subagents::matcher(),
+                "hooks": [{
+                    "type": "command",
+                    "command": env.hook_command("subagent-stop", "claude"),
+                    "timeout": 10,
+                }],
+            }),
+        )],
+        defaults: Map::new(),
+        kind: Kind::Hooks,
     }));
     parts
 }

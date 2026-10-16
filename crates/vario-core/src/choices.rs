@@ -43,11 +43,7 @@ impl Choices {
         let saved = Choices::load(data_dir);
         let configured: Vec<String> = integrations()
             .iter()
-            .filter(|integration| {
-                install::status(integration, env)
-                    .iter()
-                    .any(|(_, present)| *present)
-            })
+            .filter(|integration| install::installed(integration, env))
             .map(|integration| integration.name.to_string())
             .collect();
         if saved.is_none() && configured.is_empty() {

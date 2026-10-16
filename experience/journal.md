@@ -13,3 +13,4 @@ Modèle de la session principale (identique pendant tout le test) : Opus 5.5
 | 2026-10-16 | vario-worker | Écrire 6 tests de l'adaptateur OpenCode (tests/install.rs) | cargo test -p vario-core --test install, clippy, fmt | réussi | aucune |
 | 2026-10-16 | vario-worker | Écrire les tests de cohabitation avec une installation Handoff réaliste (tests/cohabitation.rs) | cargo test --test cohabitation, clippy, rustfmt ; marqueurs Handoff contrôlés | réussi | aucune |
 | 2026-10-16 | vario-worker | Écrire les tests pytest du choix du fichier de consignes OpenCode dans Handoff-CLI | pytest (312), ruff check, ruff format --check | réussi | aucune |
+| 2026-10-16 | vario-worker | Écrire 5 tests de bout en bout des hooks (crates/vario/tests/cli.rs) | cargo test -p vario --test cli, clippy, fmt | réussi ; assertions JSON par sous-chaînes acceptées | aucune |

@@ -53,16 +53,39 @@ impl Sandbox {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        let output = Command::new(env!("CARGO_BIN_EXE_vario"))
+        let output = self.command(args).stdin(Stdio::null()).output().unwrap();
+        Self::collect(output)
+    }
+
+    /// Like `run`, but writes `input` to the standard input, then closes it.
+    fn run_with_stdin(&self, args: &[&str], input: &str) -> Output {
+        use std::io::Write;
+        let mut child = self
+            .command(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let _ = stdin.write_all(input.as_bytes());
+        drop(stdin);
+        Self::collect(child.wait_with_output().unwrap())
+    }
+
+    fn command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vario"));
+        command
             .args(args)
             .env_clear()
             .env("HOME", self.dir.path().join("home"))
             .env("VARIO_HOME", self.data_dir())
             .env("VARIO_LANG", "en")
-            .env("PATH", self.dir.path().join("bin"))
-            .stdin(Stdio::null())
-            .output()
-            .unwrap();
+            .env("PATH", self.dir.path().join("bin"));
+        command
+    }
+
+    fn collect(output: std::process::Output) -> Output {
         Output {
             code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -138,7 +161,7 @@ fn restore_lists_then_puts_back_the_original_files() {
 
     let out = sandbox.run(&["restore", "--list"]);
     assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
-    assert!(out.stdout.contains("(3 files)"), "{}", out.stdout);
+    assert!(out.stdout.contains("(4 files)"), "{}", out.stdout);
     assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
 
     let out = sandbox.run(&["restore", "--yes"]);
@@ -146,6 +169,10 @@ fn restore_lists_then_puts_back_the_original_files() {
     assert_eq!(sandbox.rules(), USER_RULES);
     assert!(!exists(&sandbox.claude("agents/vario-reader.md")));
     assert!(!exists(&sandbox.claude("agents/vario-worker.md")));
+    assert!(
+        !exists(&sandbox.claude("settings.json")),
+        "the hook file Vario created is gone"
+    );
 }
 
 #[test]
@@ -168,4 +195,114 @@ fn a_home_without_a_client_installs_nothing() {
         out.stdout
     );
     assert!(!exists(&sandbox.claude_dir()));
+}
+
+const CLAUDE_HOOK_ARGS: &str = "hook subagent-stop --via claude";
+
+fn journal_lines(sandbox: &Sandbox) -> Vec<String> {
+    fs::read_to_string(sandbox.data_dir().join("delegations.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn install_writes_hooks_that_run_this_binary() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.run(&["install", "--yes"]);
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+
+    let exe = env!("CARGO_BIN_EXE_vario");
+    let settings = fs::read_to_string(sandbox.claude("settings.json")).unwrap();
+    let plain = format!("\"command\": \"{exe} {CLAUDE_HOOK_ARGS}\"");
+    let quoted = format!("\"command\": \"\\\"{exe}\\\" {CLAUDE_HOOK_ARGS}\"");
+    assert!(
+        settings.contains(&plain) || settings.contains(&quoted),
+        "{settings}"
+    );
+    assert!(settings.contains("\"SubagentStop\""), "{settings}");
+
+    let out = sandbox.run(&["doctor"]);
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("Hooks"), "{}", out.stdout);
+    let line = out
+        .stdout
+        .lines()
+        .find(|line| line.contains("Claude Code"))
+        .unwrap_or_else(|| panic!("{}", out.stdout));
+    assert_eq!(line.matches('✔').count(), 3, "{line}");
+}
+
+#[test]
+fn hook_journals_a_vario_sub_agent() {
+    let sandbox = Sandbox::new();
+    let args = ["hook", "subagent-stop", "--via", "claude"];
+    let input = r#"{"agent_type":"vario-worker","cwd":"/w","last_assistant_message":"RESULT: done\nCHECKS: cargo test\nESCALATE: no - fine"}"#;
+    let out = sandbox.run_with_stdin(&args, input);
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+    assert_eq!(out.stdout, "");
+
+    let lines = journal_lines(&sandbox);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    assert!(line.starts_with('{') && line.ends_with('}'), "{line}");
+    assert!(line.contains(r#""agent":"vario-worker""#), "{line}");
+    assert!(line.contains(r#""escalate":false"#), "{line}");
+    assert!(line.contains(r#""result":"done""#), "{line}");
+
+    let other = r#"{"agent_type":"Explore","cwd":"/w","last_assistant_message":"RESULT: x"}"#;
+    let out = sandbox.run_with_stdin(&args, other);
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+    assert_eq!(journal_lines(&sandbox).len(), 1);
+}
+
+#[test]
+fn hook_never_fails() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.run(&["hook", "nope", "--via", "nope"]);
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+    let out = sandbox.run(&["hook"]);
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+
+    let out = sandbox.run_with_stdin(&["hook", "subagent-stop", "--via", "cursor"], "not json");
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+    assert_eq!(out.stdout, "{}");
+    let log = fs::read_to_string(sandbox.data_dir().join("hooks.log")).unwrap();
+    assert_eq!(log.lines().count(), 1, "{log}");
+}
+
+#[test]
+fn cursor_session_start_injects_guidance() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.run_with_stdin(&["hook", "session-start", "--via", "cursor"], "{}");
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+    assert!(out.stdout.trim_start().starts_with('{'), "{}", out.stdout);
+    assert!(out.stdout.contains("additional_context"), "{}", out.stdout);
+    assert!(out.stdout.contains("vario-reader"), "{}", out.stdout);
+    assert!(out.stdout.chars().count() <= 1000, "{}", out.stdout.len());
+}
+
+#[test]
+fn doctor_fix_rewrites_a_hook_left_by_a_moved_binary() {
+    let sandbox = Sandbox::new();
+    assert_eq!(sandbox.run(&["install", "--yes"]).code, Some(0));
+
+    let exe = env!("CARGO_BIN_EXE_vario");
+    let path = sandbox.claude("settings.json");
+    let settings = fs::read_to_string(&path).unwrap();
+    assert!(settings.contains(exe), "{settings}");
+    let moved = settings.replace(exe, "/old/place/vario");
+    assert!(moved.contains("/old/place/vario hook subagent-stop --via claude"));
+    fs::write(&path, moved).unwrap();
+
+    let out = sandbox.run(&["doctor"]);
+    assert!(out.stdout.contains("incomplete"), "{}", out.stdout);
+
+    let out = sandbox.run(&["doctor", "--fix", "--yes"]);
+    assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+    let settings = fs::read_to_string(&path).unwrap();
+    assert!(settings.contains(exe), "{settings}");
+    assert!(!settings.contains("/old/place"), "{settings}");
+    assert_eq!(settings.matches(CLAUDE_HOOK_ARGS).count(), 1, "{settings}");
 }

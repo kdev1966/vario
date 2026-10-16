@@ -65,7 +65,7 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
 
     let outcomes = install::apply(&mut session(dir.path()), &claude, &env);
     assert!(outcomes[0].ok());
-    assert_eq!(outcomes[0].changes.len(), 3);
+    assert_eq!(outcomes[0].changes.len(), 4);
 
     let reader = fs::read_to_string(config.join("agents").join("vario-reader.md")).unwrap();
     assert!(reader.starts_with("---\nname: vario-reader\ndescription: \"Use proactively"));
@@ -76,10 +76,28 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
     let rules = fs::read_to_string(config.join("CLAUDE.md")).unwrap();
     assert!(rules.starts_with(user_rules) && rules.contains(BLOCK_BEGIN));
 
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(config.join("settings.json")).unwrap()).unwrap();
+    assert_eq!(
+        settings,
+        serde_json::json!({"hooks": {"SubagentStop": [{
+            "matcher": "^(vario-reader|vario-worker)$",
+            "hooks": [{
+                "type": "command",
+                "command": "vario hook subagent-stop --via claude",
+                "timeout": 10,
+            }],
+        }]}})
+    );
+
     let status = install::status(&claude[0], &env);
     assert_eq!(
         status,
-        [(Kind::Subagents, true), (Kind::Instructions, true)]
+        [
+            (Kind::Subagents, true),
+            (Kind::Instructions, true),
+            (Kind::Hooks, true)
+        ]
     );
 
     let again = install::apply(&mut session(dir.path()), &claude, &env);
@@ -95,9 +113,17 @@ fn claude_code_install_then_remove_leaves_the_user_files_as_they_were() {
         user_rules
     );
     assert!(!config.join("agents").join("vario-reader.md").exists());
+    assert!(
+        !config.join("settings.json").exists(),
+        "the settings file Vario created for its hook is gone"
+    );
     assert_eq!(
         install::status(&claude[0], &env),
-        [(Kind::Subagents, false), (Kind::Instructions, false)]
+        [
+            (Kind::Subagents, false),
+            (Kind::Instructions, false),
+            (Kind::Hooks, false)
+        ]
     );
 }
 
@@ -219,14 +245,27 @@ fn cursor_install_then_remove() {
 
     let outcomes = install::apply(&mut session(dir.path()), &cursor, &env);
     assert!(outcomes[0].ok());
-    assert_eq!(outcomes[0].changes.len(), 2);
+    assert_eq!(
+        outcomes[0].changes.len(),
+        4,
+        "two agents, then hooks.json for each of its two hooks"
+    );
 
     let mut files: Vec<_> = fs::read_dir(&config)
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect();
     files.sort();
-    assert_eq!(files, ["agents"]);
+    assert_eq!(files, ["agents", "hooks.json"]);
+    let hooks: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(config.join("hooks.json")).unwrap()).unwrap();
+    assert_eq!(
+        hooks,
+        serde_json::json!({"version": 1, "hooks": {
+            "sessionStart": [{"command": "vario hook session-start --via cursor", "timeout": 10}],
+            "subagentStop": [{"command": "vario hook subagent-stop --via cursor", "timeout": 10}],
+        }})
+    );
     let mut names: Vec<_> = fs::read_dir(&agents)
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
@@ -242,7 +281,14 @@ fn cursor_install_then_remove() {
     assert!(worker.contains("readonly: false"));
     assert!(worker.contains(subagents::MARKER_LINE));
 
-    assert_eq!(install::status(&cursor[0], &env), [(Kind::Subagents, true)]);
+    assert_eq!(
+        install::status(&cursor[0], &env),
+        [
+            (Kind::Subagents, true),
+            (Kind::Instructions, true),
+            (Kind::Hooks, true)
+        ]
+    );
 
     let again = install::apply(&mut session(dir.path()), &cursor, &env);
     assert!(
@@ -254,9 +300,14 @@ fn cursor_install_then_remove() {
     assert!(removed[0].ok());
     assert!(!agents.join("vario-reader.md").exists());
     assert!(!agents.join("vario-worker.md").exists());
+    assert!(!config.join("hooks.json").exists());
     assert_eq!(
         install::status(&cursor[0], &env),
-        [(Kind::Subagents, false)]
+        [
+            (Kind::Subagents, false),
+            (Kind::Instructions, false),
+            (Kind::Hooks, false)
+        ]
     );
 }
 

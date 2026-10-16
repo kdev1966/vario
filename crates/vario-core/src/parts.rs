@@ -10,8 +10,16 @@ use crate::files::{self, Action, Session};
 
 /// The key under which Vario registers itself in JSON configurations.
 pub const SERVER_NAME: &str = "vario";
-/// Hook entries containing this text are Vario's: every hook command runs `vario hook …`.
-pub const HOOK_MARKER: &str = "vario hook";
+/// Whether a hook command runs Vario's `hook` subcommand: `vario hook …`,
+/// `/usr/local/bin/vario hook …`, `"C:\Program Files\vario.exe" hook …`.
+pub fn is_vario_hook_command(command: &str) -> bool {
+    command.match_indices(" hook ").any(|(at, _)| {
+        let program = command[..at].trim_end_matches(['"', '\'']);
+        let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+        let name = name.to_lowercase();
+        name == "vario" || name == "vario.exe"
+    })
+}
 
 /// What a part brings to a client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,7 +93,7 @@ impl Part for JsonEntry {
 }
 
 /// Hook entries in a JSON file: `data[keys…][event]` is a list; ours are recognized by
-/// [`HOOK_MARKER`], so the user's own hooks are kept.
+/// their command ([`is_vario_hook_command`]), so the user's own hooks are kept.
 pub struct JsonHooks {
     pub path: PathBuf,
     pub keys: Vec<String>,
@@ -96,8 +104,15 @@ pub struct JsonHooks {
     pub kind: Kind,
 }
 
+/// Whether any string in the entry is a Vario hook command (Claude Code nests the
+/// command in `hooks[].command`, Cursor puts it at the top).
 fn is_ours(item: &Value) -> bool {
-    item.to_string().contains(HOOK_MARKER)
+    match item {
+        Value::String(text) => is_vario_hook_command(text),
+        Value::Array(items) => items.iter().any(is_ours),
+        Value::Object(map) => map.values().any(is_ours),
+        _ => false,
+    }
 }
 
 impl JsonHooks {
@@ -168,6 +183,19 @@ impl Part for JsonHooks {
         if !changed {
             return Ok(());
         }
+        // Drop the hooks container if it is now empty; a file left with nothing but
+        // Vario's defaults was Vario's alone, and is deleted.
+        if hooks.is_empty()
+            && let [key] = self.keys.as_slice()
+        {
+            data.shift_remove(key);
+        }
+        if data
+            .iter()
+            .all(|(key, value)| self.defaults.get(key) == Some(value))
+        {
+            return session.delete(&self.path, Action::Deleted);
+        }
         let action = Action::HooksRemoved(self.events());
         session.write_text(&self.path, &files::dump_json(&data), action)
     }
@@ -179,13 +207,14 @@ impl Part for JsonHooks {
         let Some(hooks) = files::nested(&data, &key_refs(&self.keys)) else {
             return false;
         };
-        !hooks.is_empty()
-            && self.entries.iter().all(|(event, _)| {
-                hooks
-                    .get(event)
-                    .and_then(Value::as_array)
-                    .is_some_and(|items| items.iter().any(is_ours))
-            })
+        // The exact entry: a command left by a moved or older binary counts as missing,
+        // so `doctor --fix` rewrites it.
+        self.entries.iter().all(|(event, entry)| {
+            hooks
+                .get(event)
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.contains(entry))
+        })
     }
 }
 

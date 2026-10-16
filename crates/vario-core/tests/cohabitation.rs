@@ -10,6 +10,7 @@ use vario_core::clients::{Env, integrations};
 use vario_core::files::{BLOCK_BEGIN, Session};
 use vario_core::handoff::{self, State};
 use vario_core::install;
+use vario_core::parts::is_vario_hook_command;
 
 const HANDOFF_BEGIN: &str =
     "<!-- handoff:begin (managed by Handoff; edits inside are overwritten) -->";
@@ -236,14 +237,55 @@ fn snapshot(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
+/// The JSON without Vario's hook entries, and without the event lists they leave empty.
+fn without_vario(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    fn has_vario_command(value: &Value) -> bool {
+        match value {
+            Value::String(text) => is_vario_hook_command(text),
+            Value::Array(items) => items.iter().any(has_vario_command),
+            Value::Object(map) => map.values().any(has_vario_command),
+            _ => false,
+        }
+    }
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .filter(|item| !has_vario_command(item))
+                .map(without_vario)
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), without_vario(value)))
+                .filter(|(_, value)| value.as_array().is_none_or(|items| !items.is_empty()))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// During the install, Vario may add its own hook entries beside Handoff's, and
+/// nothing else; after the removal, every file is back byte for byte.
 fn assert_handoff_intact(paths: &Paths, stage: &str) {
     for (path, expected) in paths.json_files() {
+        let current = fs::read_to_string(path).unwrap();
+        let parse = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap();
         assert_eq!(
-            fs::read_to_string(path).unwrap(),
-            expected,
-            "{} changed {stage}",
+            without_vario(&parse(&current)),
+            parse(&expected),
+            "{} changed beyond Vario's own hooks {stage}",
             path.display()
         );
+        if stage == "after the removal" {
+            assert_eq!(
+                current,
+                expected,
+                "{} not restored byte for byte",
+                path.display()
+            );
+        }
     }
     for path in [&paths.claude_md, &paths.opencode_md] {
         let text = fs::read_to_string(path).unwrap();
