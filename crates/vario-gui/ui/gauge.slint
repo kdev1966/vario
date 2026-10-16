@@ -1,137 +1,121 @@
-// The floating gauge, drawn like an audio plugin's front panel: a needle meter for
-// the 5-hour quota, a bar meter for the 7-day quota, the thermostat's state as a row
-// of mode buttons, and two knobs for the delegated share and the escalation rate.
-// Values below 0 mean "not known yet".
+// The floating gauge: a slim, dark channel strip, like an audio plugin's meter, narrow
+// enough to sit beside a code editor. Everything is drawn as vectors, so it stays sharp
+// at any resolution (Full HD, 4K, Retina). Values below 0 mean "not known yet".
 
-// A value box, like a plugin's numeric readout.
-component Readout inherits Rectangle {
-    in property <string> value;
-    in property <string> caption;
-    width: 96px;
-    height: 26px;
-    HorizontalLayout {
-        spacing: 6px;
-        Rectangle {
-            border-width: 1px;
-            border-color: #d7d5e4;
-            border-radius: 4px;
-            background: #3a3946;
-            Text {
-                text: root.value;
-                color: #f2f1f7;
-                font-size: 13px;
-                font-weight: 700;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-        Text {
-            width: 28px;
-            text: root.caption;
-            color: #f2f1f7;
-            font-size: 12px;
-            font-weight: 700;
-            vertical-alignment: center;
-        }
-    }
+// Palette.
+global Theme {
+    out property <color> panel-top: #1e1f25;
+    out property <color> panel-bottom: #121317;
+    out property <color> plate: #17181d;
+    out property <color> edge: #2d2f38;
+    out property <color> text: #e9eaef;
+    out property <color> muted: #8a8d99;
+    out property <color> amber: #e3a23b;
+    out property <color> red: #e2553f;
+    out property <color> green: #47c08a;
+    out property <color> unlit: #25262e;
 }
 
-// One of the thermostat's states, lit when active.
-component Mode inherits Rectangle {
-    in property <string> text;
-    in property <bool> active;
-    height: 22px;
-    border-radius: 3px;
-    background: active ? #d89a2b : #4a4955;
+// Small capital labels, as engraved on a front panel.
+component Caption inherits Text {
+    color: Theme.muted;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    horizontal-alignment: center;
+    // Room above capitals: Slint cuts a text at its own height (É, À).
+    height: 12px;
+    vertical-alignment: bottom;
+}
+
+// A recessed plate grouping one instrument.
+component Plate inherits Rectangle {
+    border-radius: 7px;
+    background: Theme.plate;
     border-width: 1px;
-    border-color: active ? #f0b445 : #5d5c69;
-    // As tall as the button: an accent above a capital (É) is cut at the text's own
-    // height otherwise.
-    Text {
-        width: parent.width;
-        height: parent.height;
-        text: root.text;
-        color: root.active ? #23222a : #9d9bab;
-        font-size: 10px;
-        font-weight: 700;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
+    border-color: Theme.edge;
 }
 
-// A knob whose amber arc shows a value from 0 to 100, over 270 degrees.
-component Knob inherits Rectangle {
+// A small knob: an amber arc over 270 degrees, the value inside, the caption below.
+component Knob {
     in property <float> value;
     in property <string> caption;
     in property <string> shown;
-    property <length> size: 92px;
-    property <float> r: 40;
+    property <float> r: 22;
     property <angle> start: -135deg;
     property <angle> end: -135deg + 270deg * clamp(root.value, 0, 100) / 100;
-    width: size;
-    height: size;
+    width: 60px;
+    height: 74px;
 
-    // The dark ring and the face.
-    Rectangle {
-        width: root.size;
-        height: root.size;
-        border-radius: self.width / 2;
-        background: #5b5a66;
-    }
-    Rectangle {
-        width: root.size - 14px;
-        height: root.size - 14px;
-        border-radius: self.width / 2;
-        background: #232229;
-        border-width: 1px;
-        border-color: #1a1a1f;
-    }
-    // The value's arc.
-    if root.value > 0.5: Path {
-        width: root.size;
-        height: root.size;
-        viewbox-width: 92;
-        viewbox-height: 92;
-        stroke: #d89a2b;
-        stroke-width: 5px;
+    // Track, then value.
+    Path {
+        x: 0;
+        y: 0;
+        width: 60px;
+        height: 60px;
+        viewbox-width: 60;
+        viewbox-height: 60;
+        stroke: Theme.unlit;
+        stroke-width: 4px;
         MoveTo {
-            x: 46 + root.r * sin(root.start);
-            y: 46 - root.r * cos(root.start);
+            x: 30 + root.r * sin(root.start);
+            y: 30 - root.r * cos(root.start);
         }
         ArcTo {
-            x: 46 + root.r * sin(root.end);
-            y: 46 - root.r * cos(root.end);
+            x: 30 + root.r * sin(135deg);
+            y: 30 - root.r * cos(135deg);
+            radius-x: root.r;
+            radius-y: root.r;
+            sweep: true;
+            large-arc: true;
+        }
+    }
+    if root.value > 0.5: Path {
+        x: 0;
+        y: 0;
+        width: 60px;
+        height: 60px;
+        viewbox-width: 60;
+        viewbox-height: 60;
+        stroke: Theme.amber;
+        stroke-width: 4px;
+        MoveTo {
+            x: 30 + root.r * sin(root.start);
+            y: 30 - root.r * cos(root.start);
+        }
+        ArcTo {
+            x: 30 + root.r * sin(root.end);
+            y: 30 - root.r * cos(root.end);
             radius-x: root.r;
             radius-y: root.r;
             sweep: true;
             large-arc: root.end - root.start > 180deg;
         }
     }
-    // The pointer, at the top like the image's knobs.
+    // The cap, lit from above.
     Rectangle {
-        x: root.size / 2 - 1px;
-        y: 3px;
-        width: 2px;
-        height: 9px;
-        background: #e9e7f2;
-    }
-    VerticalLayout {
-        alignment: center;
-        Text {
-            height: 18px;
-            text: root.caption;
-            color: #f2f1f7;
-            font-size: 11px;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: bottom;
-        }
+        x: 13px;
+        y: 13px;
+        width: 34px;
+        height: 34px;
+        border-radius: 17px;
+        background: @radial-gradient(circle, #3a3c46 0%, #24252c 70%, #1b1c22 100%);
+        border-width: 1px;
+        border-color: #0d0e11;
         Text {
             text: root.shown;
-            color: #c9c7d6;
-            font-size: 11px;
+            color: Theme.text;
+            font-size: 10px;
+            font-weight: 700;
             horizontal-alignment: center;
+            vertical-alignment: center;
         }
+    }
+    Caption {
+        x: 0;
+        y: 60px;
+        width: 60px;
+        text: root.caption;
     }
 }
 
@@ -139,8 +123,8 @@ export component GaugeWindow inherits Window {
     title: "Vario";
     no-frame: true;
     always-on-top: true;
-    width: 330px;
-    height: 540px;
+    width: 156px;
+    height: 494px;
     // A floating widget: only the rounded panel shows, the window itself is clear.
     background: transparent;
 
@@ -156,92 +140,55 @@ export component GaugeWindow inherits Window {
     callback close-gauge();
     callback open-main();
 
-    // The needle meter's geometry: a dial centred in a 210 px square.
-    property <float> c: 105;
-    property <float> scale-r: 82;
-    property <angle> sweep-start: -60deg;
-    property <angle> sweep: 120deg;
-    property <angle> needle: root.sweep-start
-        + root.sweep * clamp(max(root.five-hour, 0), 0, 100) / 100;
-
     function percent(value: float) -> string {
         return value < 0 ? "—" : round(value) + " %";
     }
+
+    // The needle meter's geometry: the pivot sits below the face, like a VU meter.
+    property <float> cx: 66;
+    property <float> cy: 104;
+    property <float> scale-r: 76;
+    property <angle> sweep-start: -50deg;
+    property <angle> sweep: 100deg;
+    property <angle> needle: root.sweep-start
+        + root.sweep * clamp(max(root.five-hour, 0), 0, 100) / 100;
 
     // The panel, and a move area under everything: the gauge is dragged from anywhere
     // but its two buttons.
     Rectangle {
         width: root.width;
         height: root.height;
-        border-radius: 18px;
-        background: #7d7a98;
+        border-radius: 14px;
+        background: @linear-gradient(180deg, Theme.panel-top 0%, Theme.panel-bottom 100%);
         border-width: 1px;
-        border-color: #5f5c7a;
+        border-color: Theme.edge;
     }
     WindowMoveArea {
-        x: 0;
-        y: 0;
         width: root.width;
         height: root.height;
     }
-    // The logo: a V in a triangle, then the name.
-    Path {
-        x: 14px;
-        y: 14px;
-        width: 44px;
-        height: 40px;
-        viewbox-width: 44;
-        viewbox-height: 40;
-        stroke: #2b2a33;
-        stroke-width: 3px;
-        MoveTo { x: 2; y: 2; }
-        LineTo { x: 42; y: 2; }
-        LineTo { x: 22; y: 38; }
-        Close { }
-        MoveTo { x: 12; y: 9; }
-        LineTo { x: 22; y: 27; }
-        LineTo { x: 32; y: 9; }
-    }
+
+    // Header.
     Text {
-        x: 64px;
-        y: 10px;
+        x: 12px;
+        y: 9px;
         text: "Vario";
-        color: #d89a2b;
-        font-size: 30px;
+        color: Theme.amber;
+        font-size: 17px;
         font-weight: 800;
         font-italic: true;
     }
-    Text {
-        x: 68px;
-        y: 50px;
-        text: @tr("quota gauge");
-        color: #d89a2b;
-        font-size: 11px;
-        font-weight: 700;
-    }
-    Readout {
-        x: root.width - self.width - 30px;
-        y: 12px;
-        value: root.percent(root.five-hour);
-        caption: @tr("5 h");
-    }
-    Readout {
-        x: root.width - self.width - 30px;
-        y: 44px;
-        value: root.percent(root.seven-day);
-        caption: @tr("7 d");
-    }
     Rectangle {
-        x: root.width - 24px;
-        y: 8px;
-        width: 18px;
-        height: 18px;
-        border-radius: 9px;
-        background: close-area.has-hover ? #c4553d : #5b5a66;
+        x: root.width - 26px;
+        y: 10px;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: close-area.has-hover ? Theme.red : #2a2b33;
         Text {
             text: "×";
-            color: #f2f1f7;
-            font-size: 13px;
+            color: Theme.text;
+            font-size: 11px;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -250,238 +197,276 @@ export component GaugeWindow inherits Window {
         }
     }
 
-    // The main panel.
-    Rectangle {
-        x: 10px;
-        y: 86px;
-        width: 234px;
-        height: 400px;
-        border-radius: 16px;
-        background: #2d2c35;
-        border-width: 2px;
-        border-color: #1f1e25;
-
-        // The needle meter.
+    // The needle meter, for the 5-hour quota.
+    Plate {
+        x: 12px;
+        y: 36px;
+        width: 132px;
+        height: 112px;
+        clip: true;
+        // The face, with a soft light from its centre.
         Rectangle {
-            x: 12px;
-            y: 12px;
-            width: 210px;
-            height: 210px;
-            border-radius: 105px;
-            background: #6d6c78;
+            x: 3px;
+            y: 3px;
+            width: 126px;
+            height: 106px;
+            border-radius: 5px;
+            background: @radial-gradient(circle, #2c2d36 0%, #17181d 85%);
+        }
+        // Zones: neutral, amber from 50 %, red from 80 %.
+        for band in [
+            { from: 0, to: 50, color: #6f7280 },
+            { from: 50, to: 80, color: #c58b30 },
+            { from: 80, to: 100, color: #d24c38 },
+        ]: Path {
+            width: 132px;
+            height: 112px;
+            viewbox-width: 132;
+            viewbox-height: 112;
+            stroke: band.color;
+            stroke-width: 3px;
+            MoveTo {
+                x: root.cx + root.scale-r * sin(root.sweep-start + root.sweep * band.from / 100);
+                y: root.cy - root.scale-r * cos(root.sweep-start + root.sweep * band.from / 100);
+            }
+            ArcTo {
+                x: root.cx + root.scale-r * sin(root.sweep-start + root.sweep * band.to / 100);
+                y: root.cy - root.scale-r * cos(root.sweep-start + root.sweep * band.to / 100);
+                radius-x: root.scale-r;
+                radius-y: root.scale-r;
+                sweep: true;
+                large-arc: false;
+            }
+        }
+        // Graduations every 10 %, longer every 50 %.
+        for tick in 11: Path {
+            property <angle> at: root.sweep-start + root.sweep * tick / 10;
+            property <float> inner: mod(tick, 5) == 0 ? root.scale-r - 11 : root.scale-r - 7;
+            width: 132px;
+            height: 112px;
+            viewbox-width: 132;
+            viewbox-height: 112;
+            stroke: tick >= 8 ? #d24c38 : #c9cbd4;
+            stroke-width: mod(tick, 5) == 0 ? 1.6px : 1px;
+            MoveTo {
+                x: root.cx + parent.inner * sin(parent.at);
+                y: root.cy - parent.inner * cos(parent.at);
+            }
+            LineTo {
+                x: root.cx + (root.scale-r - 2) * sin(parent.at);
+                y: root.cy - (root.scale-r - 2) * cos(parent.at);
+            }
+        }
+        for mark in [0, 50, 100]: Text {
+            property <angle> at: root.sweep-start + root.sweep * mark / 100;
+            x: (root.cx + 52 * sin(self.at)) * 1px - self.width / 2;
+            y: (root.cy - 52 * cos(self.at)) * 1px - self.height / 2;
+            text: mark;
+            color: #b9bbc6;
+            font-size: 8px;
+            font-weight: 700;
+        }
+        // The needle, with a red tip, turning around the pivot.
+        Rectangle {
+            x: root.cx * 1px - 1px;
+            y: root.cy * 1px - 80px;
+            width: 2px;
+            height: 80px;
+            background: #f1f2f6;
+            transform-origin: { x: 1px, y: 80px };
+            transform-rotation: root.needle;
+            animate transform-rotation { duration: 700ms; easing: ease-out; }
             Rectangle {
-                x: 14px;
-                y: 14px;
-                width: 182px;
-                height: 182px;
-                border-radius: 91px;
-                background: #1d1c22;
-            }
-            // Scale: the safe part, then amber from 50 % and red from 80 %.
-            for band in [
-                { from: 0, to: 50, color: #8a8898 },
-                { from: 50, to: 80, color: #b8862e },
-                { from: 80, to: 100, color: #c4553d },
-            ]: Path {
-                width: 210px;
-                height: 210px;
-                viewbox-width: 210;
-                viewbox-height: 210;
-                stroke: band.color;
-                stroke-width: 9px;
-                MoveTo {
-                    x: root.c + root.scale-r * sin(root.sweep-start + root.sweep * band.from / 100);
-                    y: root.c - root.scale-r * cos(root.sweep-start + root.sweep * band.from / 100);
-                }
-                ArcTo {
-                    x: root.c + root.scale-r * sin(root.sweep-start + root.sweep * band.to / 100);
-                    y: root.c - root.scale-r * cos(root.sweep-start + root.sweep * band.to / 100);
-                    radius-x: root.scale-r;
-                    radius-y: root.scale-r;
-                    sweep: true;
-                    large-arc: false;
-                }
-            }
-            // Tick labels every 25 %.
-            for mark in [0, 25, 50, 75, 100]: Text {
-                property <angle> at: root.sweep-start + root.sweep * mark / 100;
-                x: (root.c + 60 * sin(self.at)) * 1px - self.width / 2;
-                y: (root.c - 60 * cos(self.at)) * 1px - self.height / 2;
-                text: mark;
-                color: #e9e7f2;
-                font-size: 12px;
-                font-weight: 700;
-            }
-            // The needle, turning around the dial's centre.
-            Rectangle {
-                x: 105px - 1.5px;
-                y: 105px - 88px;
-                width: 3px;
-                height: 88px;
-                background: #f4f3f8;
-                transform-origin: { x: 1.5px, y: 88px };
-                transform-rotation: root.needle;
-                animate transform-rotation { duration: 600ms; easing: ease-out; }
-            }
-            Rectangle {
-                x: 105px - 7px;
-                y: 105px - 7px;
-                width: 14px;
+                x: 0;
+                y: 0;
+                width: 2px;
                 height: 14px;
-                border-radius: 7px;
-                background: #4a4955;
-                border-width: 2px;
-                border-color: #9d9bab;
-            }
-            Text {
-                x: 0;
-                y: 128px;
-                width: 210px;
-                text: @tr("QUOTA");
-                color: #f4f3f8;
-                font-size: 22px;
-                font-weight: 800;
-                horizontal-alignment: center;
-            }
-            Text {
-                x: 0;
-                y: 156px;
-                width: 210px;
-                text: root.five-hour-reset;
-                color: #c9c7d6;
-                font-size: 11px;
-                horizontal-alignment: center;
+                background: Theme.red;
             }
         }
-
-        // The thermostat's state.
-        HorizontalLayout {
-            x: 12px;
-            y: 236px;
-            width: 210px;
-            spacing: 4px;
-            Mode { text: @tr("NORMAL"); active: root.level == 0; }
-            Mode { text: @tr("MORE"); active: root.level == 1; }
-            Mode { text: @tr("ALERT"); active: root.level == 2; }
-            Mode { text: @tr("LIMIT"); active: root.level == 3; }
+        // The pivot's cover, and the glass's reflection.
+        Rectangle {
+            x: 0;
+            y: 90px;
+            width: 132px;
+            height: 22px;
+            background: @linear-gradient(180deg, #1d1e24 0%, #121317 100%);
+            Caption {
+                y: 4px;
+                width: 132px;
+                text: @tr("QUOTA 5 H");
+            }
         }
-
-        // The knobs.
-        Knob {
-            x: 18px;
-            y: 284px;
-            value: max(root.delegated, 0);
-            caption: @tr("DELEGATED");
-            shown: root.percent(root.delegated);
-        }
-        Knob {
-            x: 124px;
-            y: 284px;
-            value: max(root.escalated, 0);
-            caption: @tr("ESCALATED");
-            shown: root.percent(root.escalated);
+        Rectangle {
+            x: 3px;
+            y: 3px;
+            width: 126px;
+            height: 44px;
+            border-radius: 5px;
+            background: @linear-gradient(180deg, #ffffff14 0%, #ffffff00 100%);
         }
     }
 
-    // The 7-day bar meter.
-    Rectangle {
-        x: 252px;
-        y: 86px;
-        width: 68px;
-        height: 400px;
-        border-radius: 6px;
-        background: #26252c;
-        border-width: 2px;
-        border-color: #1f1e25;
-        Rectangle {
+    // The digital readout.
+    Text {
+        x: 0;
+        y: 152px;
+        width: root.width;
+        text: root.percent(root.five-hour);
+        color: root.five-hour >= 80 ? Theme.red : root.five-hour >= 50 ? Theme.amber : Theme.text;
+        font-size: 24px;
+        font-weight: 800;
+        horizontal-alignment: center;
+    }
+    Text {
+        x: 0;
+        y: 184px;
+        width: root.width;
+        text: root.five-hour-reset;
+        color: Theme.muted;
+        font-size: 9px;
+        horizontal-alignment: center;
+    }
+
+    // The 7-day quota, as a row of lit segments.
+    Plate {
+        x: 12px;
+        y: 204px;
+        width: 132px;
+        height: 42px;
+        Caption {
             x: 8px;
-            y: 8px;
-            width: 52px;
-            height: 22px;
-            border-radius: 3px;
-            border-width: 1px;
-            border-color: #d7d5e4;
+            y: 3px;
+            text: @tr("7 DAYS");
+            horizontal-alignment: left;
+        }
+        Text {
+            x: 0;
+            y: 3px;
+            width: 124px;
+            height: 12px;
+            text: root.percent(root.seven-day);
+            color: Theme.text;
+            font-size: 9px;
+            font-weight: 700;
+            horizontal-alignment: right;
+            vertical-alignment: bottom;
+        }
+        for segment in 16: Rectangle {
+            property <bool> lit: root.seven-day >= 0 && (segment + 0.5) * 100 / 16 <= root.seven-day;
+            x: 8px + segment * 7.25px;
+            y: 22px;
+            width: 5.5px;
+            height: 12px;
+            border-radius: 1px;
+            background: !self.lit ? Theme.unlit
+                : segment >= 13 ? Theme.red
+                : segment >= 8 ? Theme.amber
+                : Theme.green;
+        }
+    }
+
+    // The thermostat: one lamp per state, the active one lit.
+    Plate {
+        x: 12px;
+        y: 254px;
+        width: 132px;
+        height: 84px;
+        Caption {
+            x: 8px;
+            y: 3px;
+            text: @tr("THERMOSTAT");
+            horizontal-alignment: left;
+        }
+        for state[index] in [
+            { label: @tr("Normal"), color: #47c08a },
+            { label: @tr("Delegate more"), color: #e3a23b },
+            { label: @tr("Alert"), color: #ec7d32 },
+            { label: @tr("Limit"), color: #e2553f },
+        ]: Rectangle {
+            property <bool> lit: root.level == index;
+            x: 10px;
+            y: 20px + index * 15px;
+            width: 114px;
+            height: 13px;
+            // The lamp, with a glow when lit.
+            Rectangle {
+                x: 0;
+                y: 2px;
+                width: 9px;
+                height: 9px;
+                border-radius: 4.5px;
+                background: parent.lit ? state.color : Theme.unlit;
+                drop-shadow-blur: parent.lit ? 6px : 0;
+                drop-shadow-color: state.color;
+            }
             Text {
-                text: @tr("7 DAYS");
-                color: #f2f1f7;
+                x: 16px;
+                width: 98px;
+                height: 13px;
+                text: state.label;
+                color: parent.lit ? Theme.text : Theme.muted;
                 font-size: 10px;
-                font-weight: 700;
-                horizontal-alignment: center;
+                font-weight: parent.lit ? 700 : 400;
                 vertical-alignment: center;
             }
         }
-        // The track and its fill, from the bottom.
-        property <length> track-top: 52px;
-        property <length> track-height: 334px;
-        Rectangle {
-            x: 10px;
-            y: parent.track-top;
-            width: 18px;
-            height: parent.track-height;
-            background: #3a3428;
-            border-radius: 2px;
-        }
-        Rectangle {
-            property <float> share: clamp(max(root.seven-day, 0), 0, 100) / 100;
-            x: 10px;
-            y: parent.track-top + parent.track-height * (1 - self.share);
-            width: 18px;
-            height: parent.track-height * self.share;
-            border-radius: 2px;
-            background: @linear-gradient(0deg, #8a6a24 0%, #d89a2b 70%, #c4553d 100%);
-            animate y, height { duration: 600ms; easing: ease-out; }
-        }
-        // Graduations every 25 %, and a marker at the current value.
-        for mark in [0, 25, 50, 75, 100]: Rectangle {
-            x: 30px;
-            y: parent.track-top + parent.track-height * (1 - mark / 100) - 1px;
-            width: 34px;
-            height: 2px;
-            background: #4d4c58;
-            Text {
-                x: 12px;
-                y: -14px;
-                text: mark;
-                color: #e9e7f2;
-                font-size: 10px;
-                font-weight: 700;
-            }
-        }
-        Path {
-            property <float> share: clamp(max(root.seven-day, 0), 0, 100) / 100;
-            x: 30px;
-            y: parent.track-top + parent.track-height * (1 - self.share) - 6px;
-            width: 12px;
-            height: 12px;
-            viewbox-width: 12;
-            viewbox-height: 12;
-            fill: #f4f3f8;
-            visible: root.seven-day >= 0;
-            MoveTo { x: 0; y: 6; }
-            LineTo { x: 12; y: 0; }
-            LineTo { x: 12; y: 12; }
-            Close { }
-        }
     }
 
-    // Bottom bar: when the values were read; a click opens the main window.
+    // The knobs.
+    Knob {
+        x: 14px;
+        y: 344px;
+        value: max(root.delegated, 0);
+        caption: @tr("DELEGATED");
+        shown: root.percent(root.delegated);
+    }
+    Knob {
+        x: 82px;
+        y: 344px;
+        value: max(root.escalated, 0);
+        caption: @tr("ESCALATED");
+        shown: root.percent(root.escalated);
+    }
+
+    // Footer: when the quota was seen; a click opens the main window.
     Rectangle {
-        x: 10px;
-        y: 496px;
-        width: 310px;
-        height: 32px;
-        border-radius: 4px;
-        background: open-area.has-hover ? #3d3c47 : #33323c;
+        x: 12px;
+        y: 428px;
+        width: 132px;
+        height: 22px;
+        border-radius: 5px;
+        background: open-area.has-hover ? #2a2b34 : #1b1c22;
+        border-width: 1px;
+        border-color: Theme.edge;
         Text {
             text: root.updated;
-            color: #e9e7f2;
-            font-size: 12px;
-            font-weight: 600;
+            color: Theme.muted;
+            font-size: 9px;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
         open-area := TouchArea {
             clicked => { root.open-main(); }
         }
+    }
+    Text {
+        x: 0;
+        y: 456px;
+        width: root.width;
+        height: 14px;
+        text: @tr("open Vario ↗");
+        color: Theme.amber;
+        font-size: 9px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: bottom;
+    }
+    TouchArea {
+        x: 0;
+        y: 452px;
+        width: root.width;
+        height: 22px;
+        clicked => { root.open-main(); }
     }
 }

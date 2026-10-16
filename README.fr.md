@@ -39,7 +39,7 @@ Les hooks consignent chaque délégation aux sous-agents de Vario dans un journa
 
 Claude Code n'exécute les lignes de statut que dans le terminal : le quota est relevé quand vous utilisez Claude Code dans un terminal, pas depuis l'extension VS Code. Le reste (sous-agents, consignes, journal, `vario usage`) fonctionne partout.
 
-**Jauge flottante.** `vario-gui --gauge`, ou **Jauge flottante** dans l'application, ouvre une fenêtre système flottante et sans bordure, dessinée comme un plugin audio : au-dessus des autres applications, sur tous les bureaux (et par-dessus les applications en plein écran sur macOS), sans icône dans le Dock ni dans la barre des tâches en mode `--gauge`. Elle montre un VU-mètre à aiguille pour le quota de 5 heures, une barre pour celui de 7 jours, l'état du thermostat en boutons de mode, et deux boutons rotatifs pour la part déléguée et le taux d'escalade. Déplacez-la en la saisissant n'importe où.
+**Jauge flottante.** `vario-gui --gauge`, ou **Jauge flottante** dans l'application, ouvre une fenêtre système étroite (156 px), sombre, flottante et sans bordure, dessinée comme un plugin audio et assez fine pour tenir à côté de votre éditeur : au-dessus des autres applications, sur tous les bureaux (et par-dessus les applications en plein écran sur macOS), sans icône dans le Dock ni dans la barre des tâches en mode `--gauge`. Elle montre un VU-mètre à aiguille pour le quota de 5 heures, une rangée de diodes pour celui de 7 jours, l'état du thermostat en voyants, et deux boutons rotatifs pour la part déléguée et le taux d'escalade. Déplacez-la en la saisissant n'importe où.
 
 ## Installation
 
