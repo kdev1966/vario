@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 use super::subagents::{self, MARKER, Subagent, Tier};
 use super::{Env, Integration};
+use crate::files;
+use crate::handoff;
 use crate::parts::{Kind, MarkdownBlock, OwnFile, Part};
 
 pub fn integration() -> Integration {
@@ -14,6 +16,7 @@ pub fn integration() -> Integration {
         label: "Claude Code",
         detect: |env| env.which("claude").is_some() || config_dir(env).is_dir(),
         parts,
+        handoff_connected,
     }
 }
 
@@ -21,6 +24,22 @@ fn config_dir(env: &Env) -> PathBuf {
     env.var("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| env.home.join(".claude"))
+}
+
+/// User-scope MCP servers live in `.claude.json`: inside `$CLAUDE_CONFIG_DIR` when
+/// it is set, in the home directory otherwise.
+fn user_state_file(env: &Env) -> PathBuf {
+    match env.var("CLAUDE_CONFIG_DIR") {
+        Some(dir) => PathBuf::from(dir).join(".claude.json"),
+        None => env.home.join(".claude.json"),
+    }
+}
+
+fn handoff_connected(env: &Env) -> bool {
+    files::read_json(&user_state_file(env)).is_ok_and(|data| {
+        files::nested(&data, &["mcpServers"])
+            .is_some_and(|servers| servers.contains_key(handoff::SERVER_NAME))
+    })
 }
 
 /// Claude Code's model aliases follow each family's latest version. Until the

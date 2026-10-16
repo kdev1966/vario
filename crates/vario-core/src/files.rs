@@ -53,8 +53,13 @@ struct Entry {
 impl Session {
     /// A session whose backups go to a new, timestamped folder in Vario's data directory.
     pub fn new(dry_run: bool) -> Self {
+        Self::in_data_dir(dry_run, &paths::data_dir())
+    }
+
+    /// Same, with an explicit data directory.
+    pub fn in_data_dir(dry_run: bool, data_dir: &Path) -> Self {
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f").to_string();
-        Self::with_backup_dir(dry_run, paths::data_dir().join("backups").join(stamp))
+        Self::with_backup_dir(dry_run, backups_dir(data_dir).join(stamp))
     }
 
     pub fn with_backup_dir(dry_run: bool, backup_dir: PathBuf) -> Self {
@@ -158,17 +163,48 @@ fn backup_relative(path: &Path) -> Result<PathBuf> {
     ))
 }
 
-/// Put back every file a session changed, as it was before; delete the files it created.
-/// Returns the restored paths. The current state is not backed up first.
-pub fn restore(backup_dir: &Path) -> Result<Vec<PathBuf>> {
+pub fn backups_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("backups")
+}
+
+/// The backup folders that can be restored, oldest first (their names are timestamps).
+pub fn backups(data_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(backups_dir(data_dir)) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.join(MANIFEST).is_file())
+        .collect();
+    folders.sort();
+    folders
+}
+
+fn read_manifest(backup_dir: &Path) -> Result<Manifest> {
     let manifest_path = backup_dir.join(MANIFEST);
     let text = fs::read_to_string(&manifest_path).map_err(io(&manifest_path))?;
-    let manifest: Manifest = serde_json::from_str(&text).map_err(|err| {
+    serde_json::from_str(&text).map_err(|err| {
         Error::config(
             &manifest_path,
             format!("is not a valid backup manifest ({err})"),
         )
-    })?;
+    })
+}
+
+/// What [`restore`] would do: each path, and whether it is put back (`true`) or
+/// deleted because the session created it (`false`).
+pub fn backed_up(backup_dir: &Path) -> Result<Vec<(PathBuf, bool)>> {
+    Ok(read_manifest(backup_dir)?
+        .entries
+        .into_iter()
+        .map(|entry| (entry.path, entry.backup.is_some()))
+        .collect())
+}
+
+/// Put back every file a session changed, as it was before; delete the files it created.
+/// Returns the restored paths. The current state is not backed up first.
+pub fn restore(backup_dir: &Path) -> Result<Vec<PathBuf>> {
+    let manifest = read_manifest(backup_dir)?;
     let mut restored = Vec::new();
     for entry in manifest.entries.iter().rev() {
         match &entry.backup {

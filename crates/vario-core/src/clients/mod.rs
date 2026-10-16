@@ -81,6 +81,8 @@ pub struct Integration {
     pub label: &'static str,
     detect: fn(&Env) -> bool,
     parts: fn(&Env) -> Vec<Box<dyn Part>>,
+    /// Whether Handoff's MCP server is registered with this client.
+    handoff_connected: fn(&Env) -> bool,
 }
 
 impl Integration {
@@ -90,6 +92,10 @@ impl Integration {
 
     pub fn parts(&self, env: &Env) -> Vec<Box<dyn Part>> {
         (self.parts)(env)
+    }
+
+    pub fn handoff_connected(&self, env: &Env) -> bool {
+        (self.handoff_connected)(env)
     }
 }
 

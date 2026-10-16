@@ -4,6 +4,7 @@ use std::path::Path;
 
 use vario_core::clients::{Env, by_name, subagents};
 use vario_core::files::{BLOCK_BEGIN, Session, restore};
+use vario_core::handoff::{self, State};
 use vario_core::install;
 use vario_core::parts::Kind;
 
@@ -156,4 +157,38 @@ fn an_install_can_be_restored() {
         "mine\n"
     );
     assert!(!config.join("agents").join("vario-reader.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn handoff_is_absent_installed_or_connected() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = fake_env(dir.path());
+    let claude = by_name("claude").unwrap();
+    assert_eq!(handoff::state(&claude, &env), State::Absent);
+
+    let bin = dir.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let command = bin.join("handoff");
+    fs::write(&command, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o755)).unwrap();
+    env.vars.insert("PATH".into(), OsString::from(&bin));
+    assert_eq!(handoff::state(&claude, &env), State::NotConnected);
+
+    fs::write(
+        env.home.join(".claude.json"),
+        r#"{"mcpServers": {"handoff": {"command": "handoff"}}}"#,
+    )
+    .unwrap();
+    assert_eq!(handoff::state(&claude, &env), State::Connected);
+
+    let custom = dir.path().join("claude-config");
+    env.vars
+        .insert("CLAUDE_CONFIG_DIR".into(), OsString::from(&custom));
+    assert_eq!(
+        handoff::state(&claude, &env),
+        State::NotConnected,
+        "with CLAUDE_CONFIG_DIR, Claude Code reads .claude.json there"
+    );
 }
