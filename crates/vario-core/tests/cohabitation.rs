@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use vario_core::clients::{Env, integrations};
 use vario_core::files::{BLOCK_BEGIN, Session};
+#[cfg(unix)] // only the tests that put a `handoff` executable on PATH use it
 use vario_core::handoff::{self, State};
 use vario_core::install;
 use vario_core::parts::is_vario_hook_command;

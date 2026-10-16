@@ -699,6 +699,11 @@ mod tests {
 
     const USER_RULES: &str = "# My rules\n";
 
+    /// An expected text with the system's path separator (`~\.claude\…` on Windows).
+    fn native(text: &str) -> String {
+        text.replace('/', std::path::MAIN_SEPARATOR_STR)
+    }
+
     impl Fixture {
         fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
@@ -745,7 +750,7 @@ mod tests {
         let text = out.text();
         assert!(text.contains("AI clients found: Claude Code"), "{text}");
         assert!(
-            text.contains("- ~/.claude/agents/vario-reader.md: written"),
+            text.contains(&native("- ~/.claude/agents/vario-reader.md: written")),
             "{text}"
         );
         assert!(text.contains("nothing was changed"), "{text}");
@@ -851,7 +856,9 @@ mod tests {
         assert!(!install(&mut ctx, false, &[], false, true).unwrap());
         let text = out.text();
         assert!(
-            text.contains("! ~/.claude/agents/vario-reader.md is not managed by Vario"),
+            text.contains(&native(
+                "! ~/.claude/agents/vario-reader.md is not managed by Vario"
+            )),
             "{text}"
         );
         assert!(text.contains("Done with errors"), "{text}");
@@ -878,7 +885,10 @@ mod tests {
             "defaults to no"
         );
         let text = out.text();
-        assert!(text.contains("put back ~/.claude/CLAUDE.md"), "{text}");
+        assert!(
+            text.contains(&native("put back ~/.claude/CLAUDE.md")),
+            "{text}"
+        );
         assert!(
             text.contains("vario-reader.md (created by Vario)"),
             "{text}"
@@ -915,7 +925,7 @@ mod tests {
         let text = out.text();
         assert!(text.contains("Clients IA trouvés : Claude Code"), "{text}");
         assert!(
-            text.contains("- ~/.claude/agents/vario-reader.md : écriture"),
+            text.contains(&native("- ~/.claude/agents/vario-reader.md : écriture")),
             "{text}"
         );
         assert!(text.contains("Appliquer ces changements ? [O/n]"), "{text}");
