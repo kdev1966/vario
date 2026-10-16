@@ -11,5 +11,6 @@ pub mod install;
 pub mod lang;
 pub mod parts;
 pub mod paths;
+pub mod report;
 
 pub use error::{Error, Result};

@@ -257,7 +257,7 @@ pub fn doctor(ctx: &mut Context, fix: bool, dry_run: bool, yes: bool) -> Result<
             no_client(&mut ctx.ui);
             return Ok(true);
         }
-        report(&mut ctx.ui, &rows);
+        doctor_table(&mut ctx.ui, &rows);
         if choices.is_none() {
             not_set_up(&mut ctx.ui);
         } else if rows.iter().any(|row| {
@@ -453,6 +453,75 @@ pub fn restore(ctx: &mut Context, backup: Option<&str>, list: bool, yes: bool) -
     Ok(true)
 }
 
+pub fn report(ctx: &mut Context) -> Result<bool> {
+    let lang = ctx.ui.lang;
+    let summary = vario_core::report::summarize(&ctx.data_dir)?;
+    if summary.total.delegations == 0 {
+        ctx.ui.say(tr!(
+            lang,
+            "No delegation recorded yet: the journal fills in as Vario's sub-agents finish, through the hooks 'vario install' sets up.",
+            "Aucune délégation notée pour l'instant : le journal se remplit à la fin des sous-agents de Vario, grâce aux hooks que pose « vario install »."
+        ));
+    } else {
+        let day = |time: &Option<String>| {
+            time.as_deref()
+                .map(|time| time.chars().take(10).collect::<String>())
+                .unwrap_or_default()
+        };
+        let (first, last) = (day(&summary.first), day(&summary.last));
+        ctx.ui.say(tr!(
+            lang,
+            "Delegations from {first} to {last}:",
+            "Délégations du {first} au {last} :"
+        ));
+        let mut table = vec![vec![
+            tr!(lang, "Sub-agent", "Sous-agent"),
+            tr!(lang, "Delegations", "Délégations"),
+            tr!(lang, "Escalated", "Escalades"),
+            tr!(lang, "No footer", "Sans pied de page"),
+        ]];
+        let row = |name: String, counts: &vario_core::report::Counts| {
+            vec![
+                name,
+                counts.delegations.to_string(),
+                share(counts.escalated, counts.delegations),
+                share(counts.without_footer, counts.delegations),
+            ]
+        };
+        for (agent, counts) in &summary.agents {
+            table.push(row(agent.clone(), counts));
+        }
+        table.push(row("Total".to_string(), &summary.total));
+        print_table(&mut ctx.ui, &table);
+    }
+    if summary.unreadable > 0 {
+        let count = summary.unreadable;
+        ctx.ui.say(tr!(
+            lang,
+            "{count} unreadable line(s) skipped.",
+            "{count} ligne(s) illisible(s) ignorée(s)."
+        ));
+    }
+    let journal = shorten(
+        &vario_core::report::journal_path(&ctx.data_dir)
+            .display()
+            .to_string(),
+        &ctx.env.home,
+    );
+    ctx.ui
+        .say(tr!(lang, "Journal: {journal}", "Journal : {journal}"));
+    Ok(true)
+}
+
+/// `count` and its share of `total`: "1 (33 %)"; just "0" when there is none.
+fn share(count: usize, total: usize) -> String {
+    if count == 0 || total == 0 {
+        return count.to_string();
+    }
+    let percent = (count * 100 + total / 2) / total;
+    format!("{count} ({percent} %)")
+}
+
 /// What `run` would change, computed without writing anything.
 fn preview(ctx: &Context, run: impl FnOnce(&mut Session, &Env) -> Vec<Outcome>) -> Vec<Outcome> {
     let mut session = Session::in_data_dir(true, &ctx.data_dir);
@@ -603,7 +672,7 @@ fn suggest_handoff(ctx: &mut Context, chosen: &[Integration]) -> Result<()> {
     choices.save(&ctx.data_dir)
 }
 
-fn report(ui: &mut Ui, rows: &[Row]) {
+fn doctor_table(ui: &mut Ui, rows: &[Row]) {
     let lang = ui.lang;
     let kinds: Vec<Kind> = [Kind::Subagents, Kind::Instructions, Kind::Hooks, Kind::Mcp]
         .into_iter()
@@ -634,6 +703,11 @@ fn report(ui: &mut Ui, rows: &[Row]) {
         cells.push(row.notes(lang));
         table.push(cells);
     }
+    print_table(ui, &table);
+}
+
+/// Columns padded to their widest cell; the first row is the header.
+fn print_table(ui: &mut Ui, table: &[Vec<String>]) {
     let widths: Vec<usize> = (0..table[0].len())
         .map(|col| {
             table
@@ -643,7 +717,7 @@ fn report(ui: &mut Ui, rows: &[Row]) {
                 .unwrap_or(0)
         })
         .collect();
-    for cells in &table {
+    for cells in table {
         let line: Vec<String> = cells
             .iter()
             .zip(&widths)
@@ -939,6 +1013,41 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("non installé"), "{text}");
+    }
+
+    #[test]
+    fn report_summarizes_the_journal() {
+        let fx = Fixture::new();
+        let (mut ctx, out) = fx.ctx("", false);
+        assert!(report(&mut ctx).unwrap());
+        assert!(out.text().contains("No delegation recorded yet"));
+
+        fs::create_dir_all(&fx.data_dir).unwrap();
+        let lines = [
+            r#"{"time":"2026-10-15T09:00:00+01:00","agent":"vario-worker","result":"ok","escalate":false}"#,
+            r#"{"time":"2026-10-16T10:00:00+01:00","agent":"vario-worker","result":"stuck","escalate":true}"#,
+            r#"{"time":"2026-10-16T11:00:00+01:00","agent":"vario-reader","result":null}"#,
+        ];
+        fs::write(fx.data_dir.join("delegations.jsonl"), lines.join("\n")).unwrap();
+        let (mut ctx, out) = fx.ctx("", false);
+        assert!(report(&mut ctx).unwrap());
+        let text = out.text();
+        assert!(
+            text.contains("Delegations from 2026-10-15 to 2026-10-16:"),
+            "{text}"
+        );
+        assert!(
+            text.contains("vario-reader  1            0          1 (100 %)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("vario-worker  2            1 (50 %)   0"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Total         3            1 (33 %)   1 (33 %)"),
+            "{text}"
+        );
     }
 
     #[test]
