@@ -24,11 +24,13 @@ Each sub-agent ends its answer with a short report (`RESULT`, `CHECKS`, `UNCERTA
 
 | Client | Sub-agents and model | Delegation guidance | Hooks |
 | --- | --- | --- | --- |
-| **Claude Code** | `~/.claude/agents/`, `haiku` and `sonnet` | a block in `~/.claude/CLAUDE.md` | end of each sub-agent → journal |
+| **Claude Code** | `~/.claude/agents/`, `haiku` and `sonnet` | a block in `~/.claude/CLAUDE.md` | end of each sub-agent → journal; before each prompt → quota thermostat; a status line that reads the quota |
 | **Cursor** | `~/.cursor/agents/`, Composer 2.5 (Cursor's own model, no third-party billing) | injected at session start (Cursor has no global rules file) | end of each sub-agent → journal |
 | **OpenCode** | `~/.config/opencode/agents/`, your `small_model` for the reader, else the caller's model | the rules file OpenCode reads (`AGENTS.md`, or `~/.claude/CLAUDE.md`) | a plugin: end of each sub-agent → journal |
 
 The hooks note every delegation to Vario's sub-agents in a local journal; `vario report` and the application's **Delegations** tab summarize it: delegations, escalations and answers without a report.
+
+**Quota and thermostat (Claude Code).** Claude Code tells only the status line how much of your subscription you have used. Vario's status line saves it, and shows `Vario · 5h 23% · 7d 41%`; if you already have a status line, Vario wraps it instead: your line looks exactly the same. Before each prompt, the thermostat looks at the most used window: from 50 % it asks the main session to delegate more, from 80 % it also warns you, and at 100 % it suggests switching agents after saving a [Handoff](https://github.com/kdev1966/Handoff-CLI). `vario usage` shows the quota, the tokens per model (main session and sub-agents) over 5 hours and 7 days, the share of work delegated, and the MCP servers you connect but never use.
 
 ## Install
 
@@ -68,6 +70,7 @@ vario install --manual           # choose the clients one by one
 vario install --client opencode  # configure one client, even if it is not detected
 vario doctor                     # what is installed where; --fix repairs it
 vario report                     # the delegation journal, per sub-agent
+vario usage                      # quota, thermostat and tokens used, from local logs
 vario restore --list             # the backups; `vario restore` puts back the latest
 vario remove                     # remove Vario from every client
 ```

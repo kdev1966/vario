@@ -173,6 +173,7 @@ impl App {
                 subagents: cell(client, Kind::Subagents),
                 instructions: cell(client, Kind::Instructions),
                 hooks: cell(client, Kind::Hooks),
+                quota: cell(client, Kind::Quota),
                 handoff: match client.handoff {
                     State::Connected => tr!(lang, "connected", "connecté"),
                     State::NotConnected => tr!(lang, "not connected", "non connecté"),
@@ -515,7 +516,11 @@ mod tests {
         assert_eq!(choices, vec![("Claude Code".to_string(), true)]);
 
         window.invoke_preview();
-        assert_eq!(window.get_planned().row_count(), 4);
+        assert_eq!(
+            window.get_planned().row_count(),
+            5,
+            "two agents, CLAUDE.md, then settings.json for the hooks and the status line"
+        );
         assert!(window.get_can_apply());
         assert!(!fixture.claude().join("agents").exists());
         assert!(!fixture.claude().join("settings.json").exists());
@@ -538,7 +543,7 @@ mod tests {
         assert!(
             window
                 .get_install_message()
-                .starts_with("Done: 4 change(s)."),
+                .starts_with("Done: 5 change(s)."),
             "{}",
             window.get_install_message()
         );
@@ -550,6 +555,7 @@ mod tests {
         assert_eq!(row.subagents, "✔");
         assert_eq!(row.instructions, "✔");
         assert_eq!(row.hooks, "✔");
+        assert_eq!(row.quota, "✔");
         assert_eq!(window.get_status_message(), "Everything is in place.");
         let setup = fs::read_to_string(fixture.data_dir.join("setup.json")).unwrap();
         assert!(setup.contains("claude"), "{setup}");

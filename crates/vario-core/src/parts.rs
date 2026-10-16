@@ -18,7 +18,12 @@ pub fn is_vario_hook_command(command: &str) -> bool {
 
 /// The program a Vario hook command runs (`/usr/local/bin/vario`), without quotes.
 pub fn hook_program(command: &str) -> Option<&str> {
-    command.match_indices(" hook ").find_map(|(at, _)| {
+    vario_program(command, " hook ")
+}
+
+/// The program before `subcommand` (" hook ", " statusline") when it is Vario's.
+fn vario_program<'a>(command: &'a str, subcommand: &str) -> Option<&'a str> {
+    command.match_indices(subcommand).find_map(|(at, _)| {
         let program = command[..at].trim_matches(['"', '\'']);
         let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
         let name = name.to_lowercase();
@@ -37,6 +42,8 @@ pub enum Kind {
     Hooks,
     /// Vario's MCP server registered with the client.
     Mcp,
+    /// The status line that captures the subscription quota.
+    Quota,
 }
 
 pub trait Part {
@@ -347,5 +354,140 @@ impl Part for OwnFile {
     /// counts as missing, so `doctor --fix` rewrites it.
     fn present(&self) -> bool {
         files::read_text(&self.path).is_ok_and(|text| text == self.content)
+    }
+}
+
+/// Vario's status line in Claude Code's settings (`statusLine`, a single command),
+/// which saves the subscription quota Claude Code passes to it.
+///
+/// With no status line, Vario's takes the slot. With someone else's, Vario's wraps
+/// it: the original command is kept, hex-encoded, after `--then`, and Vario runs it
+/// and prints its output unchanged, so the user's status line looks the same.
+/// Removing Vario puts the original back.
+pub struct StatusLine {
+    pub path: PathBuf,
+    /// Vario's command without the wrapped one: `<exe> statusline`.
+    pub command: String,
+    pub kind: Kind,
+}
+
+const KEY: &str = "statusLine";
+const THEN: &str = " --then ";
+
+/// The command a status line of Vario's wraps, if any.
+pub fn wrapped_status_line(command: &str) -> Option<String> {
+    let (_, hex) = command.split_once(THEN)?;
+    unwrap_status_line(hex.trim())
+}
+
+/// The wrapped command from the hex argument after `--then`.
+pub fn unwrap_status_line(hex: &str) -> Option<String> {
+    String::from_utf8(hex_decode(hex)?).ok()
+}
+
+fn is_vario_status_line(command: &str) -> bool {
+    vario_program(&format!("{command} "), " statusline ").is_some()
+}
+
+fn hex_encode(text: &str) -> String {
+    text.bytes().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn hex_decode(hex: &str) -> Option<Vec<u8>> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+        .collect()
+}
+
+impl StatusLine {
+    /// The current `statusLine` object, if it is a command.
+    fn current(data: &Map<String, Value>) -> Option<(&Map<String, Value>, &str)> {
+        let object = data.get(KEY)?.as_object()?;
+        Some((object, object.get("command")?.as_str()?))
+    }
+
+    /// The other fields of a status line (`padding`…), kept as they are.
+    fn extras(object: &Map<String, Value>) -> Map<String, Value> {
+        object
+            .iter()
+            .filter(|(key, _)| *key != "type" && *key != "command")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    }
+
+    fn line(command: String, extras: Map<String, Value>) -> Value {
+        let mut object = Map::new();
+        object.insert("type".into(), Value::from("command"));
+        object.insert("command".into(), Value::from(command));
+        object.extend(extras);
+        Value::Object(object)
+    }
+}
+
+impl Part for StatusLine {
+    fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    fn apply(&self, session: &mut Session) -> Result<()> {
+        let mut data = files::read_json(&self.path)?;
+        let (original, extras) = match data.get(KEY) {
+            None => (None, Map::new()),
+            Some(_) => match Self::current(&data) {
+                Some((object, command)) if is_vario_status_line(command) => {
+                    (wrapped_status_line(command), Self::extras(object))
+                }
+                Some((object, command)) => (Some(command.to_string()), Self::extras(object)),
+                None => {
+                    return Err(Error::config(&self.path, Reason::NotAnObject(KEY.into())));
+                }
+            },
+        };
+        let command = match &original {
+            Some(original) => format!("{}{THEN}{}", self.command, hex_encode(original)),
+            None => self.command.clone(),
+        };
+        data.insert(KEY.into(), Self::line(command, extras));
+        let action = Action::EntrySet(KEY.into());
+        session.write_text(&self.path, &files::dump_json(&data), action)
+    }
+
+    fn remove(&self, session: &mut Session) -> Result<()> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+        let mut data = files::read_json(&self.path)?;
+        let Some((object, command)) = Self::current(&data) else {
+            return Ok(());
+        };
+        if !is_vario_status_line(command) {
+            return Ok(());
+        }
+        match wrapped_status_line(command) {
+            Some(original) => {
+                let restored = Self::line(original, Self::extras(object));
+                data.insert(KEY.into(), restored);
+            }
+            None => {
+                data.shift_remove(KEY);
+            }
+        }
+        if data.is_empty() {
+            return session.delete(&self.path, Action::Deleted);
+        }
+        let action = Action::EntryRemoved(KEY.into());
+        session.write_text(&self.path, &files::dump_json(&data), action)
+    }
+
+    fn present(&self) -> bool {
+        files::read_json(&self.path).is_ok_and(|data| {
+            Self::current(&data).is_some_and(|(_, command)| {
+                command.split(THEN).next() == Some(self.command.as_str())
+            })
+        })
     }
 }

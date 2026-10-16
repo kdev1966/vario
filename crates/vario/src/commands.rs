@@ -15,7 +15,9 @@ use vario_core::install::{self, Outcome};
 use vario_core::lang::Lang;
 use vario_core::overview::{self, ClientState, Note};
 use vario_core::parts::Kind;
+use vario_core::quota::{self, Level, Quota};
 use vario_core::tr;
+use vario_core::usage::human;
 
 use crate::ui::Ui;
 
@@ -466,6 +468,131 @@ pub fn report(ctx: &mut Context) -> Result<bool> {
     Ok(true)
 }
 
+pub fn usage(ctx: &mut Context) -> Result<bool> {
+    let lang = ctx.ui.lang;
+    let now = quota::now();
+    match Quota::load(&ctx.data_dir) {
+        Some(found) => {
+            let seen = chrono::DateTime::from_timestamp(found.captured_at, 0)
+                .map(|time| {
+                    time.with_timezone(&chrono::Local)
+                        .format("%Y-%m-%d %H:%M")
+                        .to_string()
+                })
+                .unwrap_or_default();
+            ctx.ui.say(tr!(
+                lang,
+                "Quota (Claude Code, seen {seen}):",
+                "Quota (Claude Code, relevé le {seen}) :"
+            ));
+            let (five, seven) = found.current(now);
+            for (window, label) in [
+                (five, tr!(lang, "5 hours", "5 heures")),
+                (seven, tr!(lang, "7 days", "7 jours")),
+            ] {
+                let line = match window {
+                    Some(window) => {
+                        let used = window.used_percentage.round();
+                        let left = quota::time_left(window.resets_at, now);
+                        tr!(
+                            lang,
+                            "  {label}: {used}%, resets in {left}",
+                            "  {label} : {used} %, remise à zéro dans {left}"
+                        )
+                    }
+                    None => tr!(lang, "  {label}: —", "  {label} : —"),
+                };
+                ctx.ui.say(line);
+            }
+            let level = match found.level(now) {
+                Level::Normal => tr!(lang, "normal", "normal"),
+                Level::Reinforced => tr!(lang, "delegating more", "délégation renforcée"),
+                Level::Alert => tr!(lang, "alert", "alerte"),
+                Level::Limit => tr!(lang, "limit reached", "limite atteinte"),
+            };
+            ctx.ui
+                .say(tr!(lang, "  Thermostat: {level}", "  Thermostat : {level}"));
+        }
+        None => ctx.ui.say(tr!(
+            lang,
+            "No quota yet: Vario's status line saves it once Claude Code has answered.",
+            "Pas encore de quota : la ligne de statut de Vario l'enregistre dès que Claude Code a répondu."
+        )),
+    }
+
+    for (hours, label) in [
+        (5, tr!(lang, "the last 5 hours", "les 5 dernières heures")),
+        (24 * 7, tr!(lang, "the last 7 days", "les 7 derniers jours")),
+    ] {
+        let measured = vario_core::usage::claude_code(&ctx.env, now - hours * 3600);
+        ctx.ui.say("");
+        ctx.ui.say(tr!(
+            lang,
+            "Claude Code, {label} (tokens processed: input, cache writes and output):",
+            "Claude Code, {label} (tokens traités : entrée, écriture de cache et sortie) :"
+        ));
+        let mut models: Vec<&String> = measured
+            .main
+            .keys()
+            .chain(measured.delegated.keys())
+            .collect();
+        models.sort();
+        models.dedup();
+        if models.is_empty() {
+            ctx.ui
+                .say(tr!(lang, "  nothing measured", "  rien de mesuré"));
+            continue;
+        }
+        let cell = |tokens: Option<&vario_core::usage::Tokens>| {
+            tokens.map_or("—".to_string(), |tokens| human(tokens.processed()))
+        };
+        let mut table = vec![vec![
+            tr!(lang, "  Model", "  Modèle"),
+            tr!(lang, "Session", "Session"),
+            tr!(lang, "Sub-agents", "Sous-agents"),
+        ]];
+        for model in models {
+            table.push(vec![
+                format!("  {model}"),
+                cell(measured.main.get(model)),
+                cell(measured.delegated.get(model)),
+            ]);
+        }
+        print_table(&mut ctx.ui, &table);
+        if let Some(share) = measured.delegated_share() {
+            let share = share.round();
+            ctx.ui.say(tr!(
+                lang,
+                "  Delegated: {share}% of the output tokens.",
+                "  Délégué : {share} % des tokens de sortie."
+            ));
+        }
+        if measured.estimated > 0 {
+            let count = measured.estimated;
+            ctx.ui.say(tr!(
+                lang,
+                "  {count} answer(s) with an incomplete output count in the logs (sub-agents, mostly): estimated from their length.",
+                "  {count} réponse(s) au compte de sortie incomplet dans les journaux (surtout des sous-agents) : estimé d'après leur longueur."
+            ));
+        }
+        if hours > 5 {
+            let unused: Vec<String> = vario_core::usage::claude_code_mcp_servers(&ctx.env)
+                .into_iter()
+                .filter(|server| !measured.mcp_calls.contains_key(server))
+                .collect();
+            if !unused.is_empty() {
+                let unused = unused.join(", ");
+                ctx.ui.say(tr!(
+                    lang,
+                    "  MCP servers connected but unused in 7 days (their tool descriptions are sent at every turn): {unused}",
+                    "  Serveurs MCP connectés mais inutilisés depuis 7 jours (leurs descriptions d'outils sont envoyées à chaque tour) : {unused}"
+                ));
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// `count` and its share of `total`: "1 (33 %)"; just "0" when there is none.
 fn share(count: usize, total: usize) -> String {
     if count == 0 || total == 0 {
@@ -620,13 +747,19 @@ fn suggest_handoff(ctx: &mut Context, chosen: &[Integration]) -> Result<()> {
 
 fn doctor_table(ui: &mut Ui, rows: &[ClientState]) {
     let lang = ui.lang;
-    let kinds: Vec<Kind> = [Kind::Subagents, Kind::Instructions, Kind::Hooks, Kind::Mcp]
-        .into_iter()
-        .filter(|kind| {
-            rows.iter()
-                .any(|row| row.status.iter().any(|(k, _)| k == kind))
-        })
-        .collect();
+    let kinds: Vec<Kind> = [
+        Kind::Subagents,
+        Kind::Instructions,
+        Kind::Hooks,
+        Kind::Quota,
+        Kind::Mcp,
+    ]
+    .into_iter()
+    .filter(|kind| {
+        rows.iter()
+            .any(|row| row.status.iter().any(|(k, _)| k == kind))
+    })
+    .collect();
     let mut header = vec!["Client".to_string()];
     header.extend(kinds.iter().map(|kind| kind_label(*kind, lang)));
     header.extend(["Handoff".to_string(), tr!(lang, "Notes", "Remarques")]);
@@ -687,6 +820,7 @@ fn kind_label(kind: Kind, lang: Lang) -> String {
         Kind::Instructions => tr!(lang, "Instructions", "Consignes"),
         Kind::Hooks => "Hooks".to_string(),
         Kind::Mcp => "MCP".to_string(),
+        Kind::Quota => "Quota".to_string(),
     }
 }
 
@@ -826,7 +960,7 @@ mod tests {
         assert!(install(&mut ctx, false, &[], false, false).unwrap());
         let text = out.text();
         assert!(text.contains("Apply these changes? [Y/n]"), "{text}");
-        assert!(text.contains("Done: 4 change(s)."), "{text}");
+        assert!(text.contains("Done: 5 change(s)."), "{text}");
         assert!(text.contains("Backups: "), "{text}");
         assert!(fx.claude("agents/vario-worker.md").is_file());
         assert_eq!(Choices::load(&fx.data_dir).unwrap().clients, ["claude"]);
@@ -835,11 +969,11 @@ mod tests {
         doctor(&mut ctx, false, false, false).unwrap();
         let text = out.text();
         assert!(
-            text.contains("Client       Sub-agents  Instructions  Hooks  Handoff"),
+            text.contains("Client       Sub-agents  Instructions  Hooks  Quota  Handoff"),
             "{text}"
         );
         assert!(
-            text.contains("Claude Code  ✔           ✔             ✔      not installed"),
+            text.contains("Claude Code  ✔           ✔             ✔      ✔      not installed"),
             "{text}"
         );
         assert!(!text.contains("Something is missing"), "{text}");
@@ -954,13 +1088,15 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Appliquer ces changements ? [O/n]"), "{text}");
-        assert!(text.contains("Terminé : 4 changement(s)."), "{text}");
+        assert!(text.contains("Terminé : 5 changement(s)."), "{text}");
 
         let (mut ctx, out) = fx.with_ui(scripted_in(Lang::Fr, "", false));
         doctor(&mut ctx, false, false, false).unwrap();
         let text = out.text();
         assert!(
-            text.contains("Client       Sous-agents  Consignes  Hooks  Handoff       Remarques"),
+            text.contains(
+                "Client       Sous-agents  Consignes  Hooks  Quota  Handoff       Remarques"
+            ),
             "{text}"
         );
         assert!(text.contains("non installé"), "{text}");

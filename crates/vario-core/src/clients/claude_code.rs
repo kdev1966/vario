@@ -1,7 +1,9 @@
 //! Claude Code: sub-agents in `<config>/agents/*.md` (YAML header with a `model`
-//! alias), the delegation guidance in `<config>/CLAUDE.md`, and a `SubagentStop` hook
-//! in `<config>/settings.json` that journals each delegation, for every project.
-//! `<config>` is `$CLAUDE_CONFIG_DIR`, or `~/.claude`.
+//! alias), the delegation guidance in `<config>/CLAUDE.md`, and in
+//! `<config>/settings.json` a `SubagentStop` hook that journals each delegation, a
+//! `UserPromptSubmit` hook for the quota thermostat, and the status line that
+//! captures the quota, for every project. `<config>` is `$CLAUDE_CONFIG_DIR`, or
+//! `~/.claude`.
 
 use std::path::PathBuf;
 
@@ -10,7 +12,7 @@ use serde_json::{Map, json};
 use super::subagents::{self, MARKER, Subagent, Tier, yaml_string};
 use super::{Env, Integration, has_mcp_server};
 use crate::handoff;
-use crate::parts::{JsonHooks, Kind, MarkdownBlock, OwnFile, Part};
+use crate::parts::{JsonHooks, Kind, MarkdownBlock, OwnFile, Part, StatusLine};
 
 pub fn integration() -> Integration {
     Integration {
@@ -22,7 +24,7 @@ pub fn integration() -> Integration {
     }
 }
 
-fn config_dir(env: &Env) -> PathBuf {
+pub(crate) fn config_dir(env: &Env) -> PathBuf {
     env.var("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| env.home.join(".claude"))
@@ -30,7 +32,7 @@ fn config_dir(env: &Env) -> PathBuf {
 
 /// User-scope MCP servers live in `.claude.json`: inside `$CLAUDE_CONFIG_DIR` when
 /// it is set, in the home directory otherwise.
-fn user_state_file(env: &Env) -> PathBuf {
+pub(crate) fn user_state_file(env: &Env) -> PathBuf {
     match env.var("CLAUDE_CONFIG_DIR") {
         Some(dir) => PathBuf::from(dir).join(".claude.json"),
         None => env.home.join(".claude.json"),
@@ -71,19 +73,36 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
     parts.push(Box::new(JsonHooks {
         path: dir.join("settings.json"),
         keys: vec!["hooks".into()],
-        entries: vec![(
-            "SubagentStop".into(),
-            json!({
-                "matcher": subagents::matcher(),
-                "hooks": [{
-                    "type": "command",
-                    "command": env.hook_command("subagent-stop", "claude"),
-                    "timeout": 10,
-                }],
-            }),
-        )],
+        entries: vec![
+            (
+                "SubagentStop".into(),
+                json!({
+                    "matcher": subagents::matcher(),
+                    "hooks": [{
+                        "type": "command",
+                        "command": env.hook_command("subagent-stop", "claude"),
+                        "timeout": 10,
+                    }],
+                }),
+            ),
+            (
+                "UserPromptSubmit".into(),
+                json!({
+                    "hooks": [{
+                        "type": "command",
+                        "command": env.hook_command("prompt-submit", "claude"),
+                        "timeout": 5,
+                    }],
+                }),
+            ),
+        ],
         defaults: Map::new(),
         kind: Kind::Hooks,
+    }));
+    parts.push(Box::new(StatusLine {
+        path: dir.join("settings.json"),
+        command: env.status_line_command(),
+        kind: Kind::Quota,
     }));
     parts
 }

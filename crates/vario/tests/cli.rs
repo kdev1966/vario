@@ -240,7 +240,11 @@ fn install_writes_hooks_that_run_this_binary() {
         .lines()
         .find(|line| line.contains("Claude Code"))
         .unwrap_or_else(|| panic!("{}", out.stdout));
-    assert_eq!(line.matches('✔').count(), 3, "{line}");
+    assert_eq!(
+        line.matches('✔').count(),
+        4,
+        "sub-agents, instructions, hooks and the quota's status line: {line}"
+    );
 }
 
 #[test]

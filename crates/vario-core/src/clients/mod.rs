@@ -2,7 +2,7 @@
 //!
 //! Paths and formats come from each client's official documentation.
 
-mod claude_code;
+pub(crate) mod claude_code;
 mod cursor;
 mod opencode;
 pub mod subagents;
@@ -40,15 +40,24 @@ impl Env {
     /// The command a client runs for a hook: `<exe> hook <event> --via <client>`. The
     /// absolute path keeps working when `PATH` differs in the client's environment.
     pub fn hook_command(&self, event: &str, via: &str) -> String {
+        format!("{} hook {event} --via {via}", self.program())
+    }
+
+    /// Claude Code's status line command: `<exe> statusline`.
+    pub fn status_line_command(&self) -> String {
+        format!("{} statusline", self.program())
+    }
+
+    /// The `vario` executable, quoted when its path needs it.
+    fn program(&self) -> String {
         let exe = self.exe.to_string_lossy();
-        let program = if exe.is_empty() {
+        if exe.is_empty() {
             "vario".to_string()
         } else if exe.contains([' ', '"', '\'']) {
             format!("\"{exe}\"")
         } else {
             exe.into_owned()
-        };
-        format!("{program} hook {event} --via {via}")
+        }
     }
 
     /// A variable's value; an empty value counts as unset.

@@ -12,7 +12,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use vario_core::clients::{Env, integrations};
 use vario_core::hooks::{self, Event, Via};
 use vario_core::lang::Lang;
-use vario_core::paths;
+use vario_core::{parts, paths, statusline};
 
 use crate::commands::Context;
 use crate::ui::Ui;
@@ -67,6 +67,8 @@ enum Command {
     },
     /// Summarize the delegations journaled by the hooks.
     Report,
+    /// Show the quota, the thermostat and the tokens used, from local logs.
+    Usage,
     /// Put back the files as they were before a change by Vario.
     Restore {
         /// Backup folder, by name or path; the most recent one by default.
@@ -128,6 +130,11 @@ fn command_line(lang: Lang) -> clap::Command {
         .mut_subcommand("report", |sub| {
             sub.about("Résumer les délégations notées par les hooks.")
         })
+        .mut_subcommand("usage", |sub| {
+            sub.about(
+                "Afficher le quota, le thermostat et les tokens consommés, d'après les journaux locaux.",
+            )
+        })
         .mut_subcommand("restore", |sub| {
             sub.about("Remettre les fichiers comme avant un changement fait par Vario.")
                 .mut_arg("backup", |arg| {
@@ -165,10 +172,39 @@ fn hook(args: &[OsString]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `vario statusline [--then <hex>]`, Claude Code's status line. Like the hooks, it
+/// is handled before the parser and always exits with status 0.
+fn status_line(args: &[OsString]) -> ExitCode {
+    let wrapped = args
+        .iter()
+        .position(|arg| arg == "--then")
+        .and_then(|index| args.get(index + 1))
+        .and_then(|hex| hex.to_str())
+        .and_then(parts::unwrap_status_line);
+    let mut input = String::new();
+    if !io::stdin().is_terminal() {
+        let _ = io::stdin().take(1 << 20).read_to_string(&mut input);
+    }
+    let env = Env::current();
+    let line = statusline::run(
+        &input,
+        wrapped.as_deref(),
+        &paths::data_dir(),
+        Lang::detect(&env),
+    );
+    let mut stdout = io::stdout();
+    let _ = stdout.write_all(line.as_bytes());
+    let _ = stdout.flush();
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
     if args.get(1).is_some_and(|arg| arg == "hook") {
         return hook(&args);
+    }
+    if args.get(1).is_some_and(|arg| arg == "statusline") {
+        return status_line(&args);
     }
     let env = Env::current();
     let lang = Lang::detect(&env);
@@ -189,6 +225,7 @@ fn main() -> ExitCode {
         Command::Remove { dry_run, yes } => commands::remove(&mut ctx, dry_run, yes),
         Command::Doctor { fix, dry_run, yes } => commands::doctor(&mut ctx, fix, dry_run, yes),
         Command::Report => commands::report(&mut ctx),
+        Command::Usage => commands::usage(&mut ctx),
         Command::Restore { backup, list, yes } => {
             commands::restore(&mut ctx, backup.as_deref(), list, yes)
         }

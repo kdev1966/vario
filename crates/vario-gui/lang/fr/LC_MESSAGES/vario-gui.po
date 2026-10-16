@@ -22,6 +22,10 @@ msgid "Hooks"
 msgstr "Hooks"
 
 msgctxt "ClientTable"
+msgid "Quota"
+msgstr "Quota"
+
+msgctxt "ClientTable"
 msgid "Notes"
 msgstr "Remarques"
 
