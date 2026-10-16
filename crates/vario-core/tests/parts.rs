@@ -261,3 +261,19 @@ fn json_hooks_are_present_only_with_the_exact_entry() {
         "the old entry is replaced, not kept beside the new one"
     );
 }
+
+#[test]
+fn the_program_of_a_hook_command() {
+    use vario_core::parts::hook_program;
+    assert_eq!(
+        hook_program("/usr/local/bin/vario hook subagent-stop --via claude"),
+        Some("/usr/local/bin/vario")
+    );
+    assert_eq!(
+        hook_program(
+            r#""/Applications/My Apps/Vario.app/Contents/MacOS/vario" hook session-start --via cursor"#
+        ),
+        Some("/Applications/My Apps/Vario.app/Contents/MacOS/vario")
+    );
+    assert_eq!(hook_program("python -m ai_handoff hook claude stop"), None);
+}

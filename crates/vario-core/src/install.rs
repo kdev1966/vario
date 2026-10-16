@@ -84,6 +84,16 @@ pub fn installed(integration: &Integration, env: &Env) -> bool {
     status(integration, env).contains(&(Kind::Subagents, true))
 }
 
+/// The `vario` program the installed hooks run, if one is installed and still exists.
+/// An interface reuses it, so that it does not rewrite the hooks to its own copy.
+pub fn hook_program(env: &Env) -> Option<std::path::PathBuf> {
+    crate::clients::integrations()
+        .iter()
+        .flat_map(|integration| integration.parts(env))
+        .flat_map(|part| part.hook_programs())
+        .find(|program| program.is_file())
+}
+
 /// For each kind this client supports: whether everything of that kind is in place.
 pub fn status(integration: &Integration, env: &Env) -> Vec<(Kind, bool)> {
     let mut result: Vec<(Kind, bool)> = Vec::new();

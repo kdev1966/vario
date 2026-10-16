@@ -559,3 +559,29 @@ fn handoff_connected_in_opencode() {
     .unwrap();
     assert_eq!(handoff::state(&opencode, &env), State::Connected);
 }
+
+#[test]
+fn the_program_the_installed_hooks_run_is_found_while_it_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = fake_env(dir.path());
+    fs::create_dir_all(env.home.join(".claude")).unwrap();
+    assert_eq!(install::hook_program(&env), None, "nothing installed yet");
+
+    let program = dir.path().join("bin").join("vario");
+    fs::create_dir_all(program.parent().unwrap()).unwrap();
+    fs::write(&program, "").unwrap();
+    env.exe = program.clone();
+    install::apply(
+        &mut session(dir.path()),
+        &[by_name("claude").unwrap()],
+        &env,
+    );
+    assert_eq!(install::hook_program(&env), Some(program.clone()));
+
+    fs::remove_file(&program).unwrap();
+    assert_eq!(
+        install::hook_program(&env),
+        None,
+        "a program that no longer exists is not reused"
+    );
+}
