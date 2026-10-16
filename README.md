@@ -32,7 +32,7 @@ The hooks note every delegation to Vario's sub-agents in a local journal; `vario
 
 ## Install
 
-**Prebuilt** (from the first release on, on the [Releases](https://github.com/kdev1966/vario/releases) page):
+**Prebuilt**, from the [Releases](https://github.com/kdev1966/vario/releases) page:
 
 - **macOS application**: `Vario-macos-aarch64.zip` (Apple silicon) or `Vario-macos-x86_64.zip` (Intel). Unzip it and move `Vario.app` to Applications. It is not notarized: open it the first time with a right click, **Open**. The command is inside the app.
 - **Command, macOS and Linux**:
@@ -44,8 +44,6 @@ The hooks note every delegation to Vario's sub-agents in a local journal; `vario
   powershell -ExecutionPolicy Bypass -c "irm https://github.com/kdev1966/vario/releases/latest/download/vario-installer.ps1 | iex"
   ```
 - **Application on Linux and Windows**: the same way with `vario-gui-installer.sh` or `vario-gui-installer.ps1`.
-
-> No release is published yet: until then, install from source.
 
 **From source** (Rust 1.88 or later for the command, 1.92 for the application):
 

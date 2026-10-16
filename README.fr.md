@@ -32,7 +32,7 @@ Les hooks consignent chaque délégation aux sous-agents de Vario dans un journa
 
 ## Installation
 
-**Binaires prêts à l'emploi** (à partir de la première version, sur la page [Releases](https://github.com/kdev1966/vario/releases)) :
+**Binaires prêts à l'emploi**, sur la page [Releases](https://github.com/kdev1966/vario/releases) :
 
 - **Application macOS** : `Vario-macos-aarch64.zip` (processeur Apple) ou `Vario-macos-x86_64.zip` (Intel). Décompressez-la et placez `Vario.app` dans Applications. Elle n'est pas notarisée : ouvrez-la la première fois par un clic droit, **Ouvrir**. La commande est incluse dans l'application.
 - **Commande, macOS et Linux** :
@@ -44,8 +44,6 @@ Les hooks consignent chaque délégation aux sous-agents de Vario dans un journa
   powershell -ExecutionPolicy Bypass -c "irm https://github.com/kdev1966/vario/releases/latest/download/vario-installer.ps1 | iex"
   ```
 - **Application sous Linux et Windows** : de la même façon, avec `vario-gui-installer.sh` ou `vario-gui-installer.ps1`.
-
-> Aucune version n'est encore publiée : d'ici là, installez à partir des sources.
 
 **À partir des sources** (Rust 1.88 ou plus pour la commande, 1.92 pour l'application) :
 
