@@ -4,7 +4,7 @@ All notable changes to Vario are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.1] - 2026-10-16
 
 ### Fixed
 
@@ -51,5 +51,6 @@ First release: `vario` (install, remove, doctor, restore, report) and `vario-gui
 Claude Code, Cursor and OpenCode, with economical sub-agents, delegation guidance, a
 local delegation journal, French and English, and `Vario.app` for macOS.
 
+[0.2.1]: https://github.com/kdev1966/vario/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/kdev1966/vario/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kdev1966/vario/releases/tag/v0.1.0
