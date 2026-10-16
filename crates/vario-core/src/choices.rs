@@ -79,6 +79,14 @@ impl Choices {
         self.declined.retain(|name| !clients.contains(name));
     }
 
+    /// Add to the saved choices: clients chosen and declined in this run.
+    pub fn remember(data_dir: &Path, chosen: &[String], declined: &[String]) -> Result<()> {
+        let mut choices = Choices::load(data_dir).unwrap_or_default();
+        choices.choose(chosen);
+        choices.decline(declined);
+        choices.save(data_dir)
+    }
+
     pub fn save(&self, data_dir: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(self).expect("choices always serialize");
         files::atomic_write(&path(data_dir), &(json + "\n"))
