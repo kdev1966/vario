@@ -1,0 +1,122 @@
+# French translation of Vario's interface.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: fr\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgctxt "ClientTable"
+msgid "Client"
+msgstr "Client"
+
+msgctxt "ClientTable"
+msgid "Sub-agents"
+msgstr "Sous-agents"
+
+msgctxt "ClientTable"
+msgid "Instructions"
+msgstr "Consignes"
+
+msgctxt "ClientTable"
+msgid "Hooks"
+msgstr "Hooks"
+
+msgctxt "ClientTable"
+msgid "Notes"
+msgstr "Remarques"
+
+msgctxt "ReportTable"
+msgid "Sub-agent"
+msgstr "Sous-agent"
+
+msgctxt "ReportTable"
+msgid "Delegations"
+msgstr "Délégations"
+
+msgctxt "AppWindow"
+msgid "Delegations"
+msgstr "Délégations"
+
+msgctxt "ReportTable"
+msgid "Escalated"
+msgstr "Escalades"
+
+msgctxt "ReportTable"
+msgid "No footer"
+msgstr "Sans pied de page"
+
+msgctxt "AppWindow"
+msgid "Status"
+msgstr "État"
+
+msgctxt "AppWindow"
+msgid "What Vario installed in each AI client on this machine."
+msgstr "Ce que Vario a installé dans chaque client IA de cette machine."
+
+msgctxt "AppWindow"
+msgid "Refresh"
+msgstr "Actualiser"
+
+msgctxt "AppWindow"
+msgid "Repair"
+msgstr "Réparer"
+
+msgctxt "AppWindow"
+msgid "Remove Vario…"
+msgstr "Retirer Vario…"
+
+msgctxt "AppWindow"
+msgid "Remove Vario from every client?"
+msgstr "Retirer Vario de tous les clients ?"
+
+msgctxt "AppWindow"
+msgid "Vario's sub-agents, instructions and hooks are removed; every file is backed up first, and a new install brings them back."
+msgstr "Les sous-agents, consignes et hooks de Vario sont retirés ; chaque fichier est sauvegardé avant, et une nouvelle installation les remet en place."
+
+msgctxt "AppWindow"
+msgid "Remove"
+msgstr "Retirer"
+
+msgctxt "AppWindow"
+msgid "Cancel"
+msgstr "Annuler"
+
+msgctxt "AppWindow"
+msgid "Install"
+msgstr "Installation"
+
+msgctxt "AppWindow"
+msgid "Vario adds economical sub-agents and delegation guidance to your AI clients. Nothing changes before you see the changes and apply them."
+msgstr "Vario ajoute à vos clients IA des sous-agents économiques et des consignes de délégation. Rien ne change avant que vous ayez vu les changements et cliqué sur Appliquer."
+
+msgctxt "AppWindow"
+msgid "Manual mode: choose the clients one by one"
+msgstr "Mode manuel : choisir les clients un par un"
+
+msgctxt "AppWindow"
+msgid "No supported AI client was found on this machine."
+msgstr "Aucun client IA compatible n'a été trouvé sur cette machine."
+
+msgctxt "AppWindow"
+msgid "See the changes"
+msgstr "Voir les changements"
+
+msgctxt "AppWindow"
+msgid "Apply"
+msgstr "Appliquer"
+
+msgctxt "AppWindow"
+msgid "Each time one of Vario's sub-agents finishes, its report is noted locally. Escalations and missing report footers show where delegation falls short."
+msgstr "Chaque fois qu'un sous-agent de Vario termine, son compte rendu est noté sur cette machine. Les escalades et les pieds de page manquants montrent où la délégation atteint ses limites."
+
+msgctxt "AppWindow"
+msgid "About"
+msgstr "À propos"
+
+msgctxt "AppWindow"
+msgid "Vario {}"
+msgstr "Vario {}"
+
+msgctxt "AppWindow"
+msgid "Routes the simple tasks of your AI agents to cheaper models, through their own sub-agents. Local: Vario sends nothing to anyone. MIT licence."
+msgstr "Confie les tâches simples de vos agents IA à des modèles moins chers, grâce à leurs propres sous-agents. Local : Vario n'envoie rien à personne. Licence MIT."
