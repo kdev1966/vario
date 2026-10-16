@@ -4,9 +4,8 @@
 
 use std::path::PathBuf;
 
-use super::subagents::{self, MARKER, Subagent, Tier};
-use super::{Env, Integration};
-use crate::files;
+use super::subagents::{self, MARKER, Subagent, Tier, yaml_string};
+use super::{Env, Integration, has_mcp_server};
 use crate::handoff;
 use crate::parts::{Kind, MarkdownBlock, OwnFile, Part};
 
@@ -36,10 +35,7 @@ fn user_state_file(env: &Env) -> PathBuf {
 }
 
 fn handoff_connected(env: &Env) -> bool {
-    files::read_json(&user_state_file(env)).is_ok_and(|data| {
-        files::nested(&data, &["mcpServers"])
-            .is_some_and(|servers| servers.contains_key(handoff::SERVER_NAME))
-    })
+    has_mcp_server(&user_state_file(env), handoff::SERVER_NAME)
 }
 
 /// Claude Code's model aliases follow each family's latest version. Until the
@@ -85,9 +81,4 @@ fn render(subagent: &Subagent) -> String {
         model(subagent.tier),
         subagents::body(subagent),
     )
-}
-
-/// A double-quoted YAML scalar, safe whatever the text holds (`: `, `#`, quotes).
-fn yaml_string(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }

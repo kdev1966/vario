@@ -3,6 +3,7 @@
 //! Paths and formats come from each client's official documentation.
 
 mod claude_code;
+mod cursor;
 pub mod subagents;
 
 use std::collections::HashMap;
@@ -10,6 +11,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
+use crate::files;
 use crate::parts::Part;
 use crate::paths;
 
@@ -74,6 +76,13 @@ fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
 
+/// Whether the JSON file registers an MCP server under `mcpServers.<name>`.
+fn has_mcp_server(path: &Path, name: &str) -> bool {
+    files::read_json(path).is_ok_and(|data| {
+        files::nested(&data, &["mcpServers"]).is_some_and(|servers| servers.contains_key(name))
+    })
+}
+
 /// A client Vario can configure.
 pub struct Integration {
     /// Identifier used on the command line (`vario install --client claude`).
@@ -101,7 +110,7 @@ impl Integration {
 
 /// Every supported client, in the order they are shown.
 pub fn integrations() -> Vec<Integration> {
-    vec![claude_code::integration()]
+    vec![claude_code::integration(), cursor::integration()]
 }
 
 pub fn by_name(name: &str) -> Option<Integration> {

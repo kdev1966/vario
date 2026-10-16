@@ -62,6 +62,11 @@ You carry out a task defined by the main session. You change neither its goal no
     ]
 }
 
+/// A double-quoted YAML scalar, safe whatever the text holds (`: `, `#`, quotes).
+pub(super) fn yaml_string(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// The full system prompt of a sub-agent, after its client-specific header.
 pub fn body(subagent: &Subagent) -> String {
     format!("{MARKER_LINE}\n\n{}\n\n{REPORT_FOOTER}\n", subagent.prompt)
