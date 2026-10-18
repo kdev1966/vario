@@ -82,9 +82,7 @@ pub(crate) fn open(
     lang: Lang,
 ) -> Result<(AppWindow, Rc<RefCell<App>>), slint::PlatformError> {
     let window = AppWindow::new()?;
-    if lang == Lang::Fr {
-        let _ = slint::select_bundled_translation("fr");
-    }
+    select_translation(lang);
     window.set_version(env!("CARGO_PKG_VERSION").into());
 
     let app = Rc::new(RefCell::new(App {
@@ -139,6 +137,16 @@ pub(crate) fn open(
     Ok((window, app))
 }
 
+/// Words the `.slint` text in `lang`. Slint picks a bundle from the system locale on
+/// its own, while `lang` may come from `LANG`: an agent that starts the gauge with
+/// `LANG=en_US` must get English labels too, not French ones around English values.
+fn select_translation(lang: Lang) {
+    let _ = slint::select_bundled_translation(match lang {
+        Lang::En => "en",
+        Lang::Fr => "fr",
+    });
+}
+
 /// The main window and the state behind it.
 type MainWindow = (AppWindow, Rc<RefCell<App>>);
 
@@ -149,9 +157,7 @@ pub(crate) fn open_gauge(
     lang: Lang,
 ) -> Result<GaugeWindow, slint::PlatformError> {
     let gauge = GaugeWindow::new()?;
-    if lang == Lang::Fr {
-        let _ = slint::select_bundled_translation("fr");
-    }
+    select_translation(lang);
     gauge::Reading::read(&data_dir, lang, None, vario_core::quota::now()).show(&gauge);
     gauge::feed(&gauge, env, data_dir, lang);
     Ok(gauge)

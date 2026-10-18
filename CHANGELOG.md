@@ -27,6 +27,12 @@ All notable changes to Vario are listed here. The format follows
 - Only Cursor still takes the delegation guidance from the session-start hook; the
   other clients read it from their instructions file.
 
+### Fixed
+
+- The interface no longer mixes languages when an agent starts it with another `LANG`
+  than the system's (OpenCode with `en_US`): its labels now follow the same language
+  as its values.
+
 ## [0.2.1] - 2026-10-16
 
 ### Fixed
