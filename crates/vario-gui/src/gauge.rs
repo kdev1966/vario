@@ -29,13 +29,22 @@ pub struct Reading {
     pub delegated: f32,
     pub escalated: f32,
     pub updated: String,
+    /// The quota was seen too long ago to be the quota of the moment.
+    pub stale: bool,
 }
 
 impl Reading {
-    /// Read the quota and the journal now; `delegated` comes from the last
+    /// Read the quota (the more recent of `data_dir`'s and the `/usage` cache in
+    /// `usage_cache`) and the journal now; `delegated` comes from the last
     /// measurement of the logs.
-    pub fn read(data_dir: &Path, lang: Lang, delegated: Option<f64>, now: i64) -> Reading {
-        let quota = Quota::load(data_dir);
+    pub fn read(
+        data_dir: &Path,
+        usage_cache: &Path,
+        lang: Lang,
+        delegated: Option<f64>,
+        now: i64,
+    ) -> Reading {
+        let quota = Quota::latest(data_dir, usage_cache);
         let (five, seven) = quota
             .as_ref()
             .map_or((None, None), |quota| quota.current(now));
@@ -44,8 +53,10 @@ impl Reading {
                 let left = quota::time_left(window.resets_at, now);
                 tr!(lang, "resets in {left}", "remise à zéro dans {left}")
             }
+            None if quota.is_some() => tr!(lang, "quota expired", "quota expiré"),
             None => tr!(lang, "no quota yet", "pas encore de quota"),
         };
+        let stale = quota.as_ref().is_some_and(|quota| quota.is_stale(now));
         // No current window (none seen yet, or all past their reset): unknown.
         let level = match quota.as_ref().map(|quota| quota.level(now)) {
             _ if five.is_none() && seven.is_none() => -1,
@@ -59,6 +70,15 @@ impl Reading {
             .then(|| journal.total.escalated as f64 * 100.0 / journal.total.delegations as f64);
         // Short: the gauge is narrow.
         let updated = match quota.map(|quota| quota.captured_at) {
+            // Only Claude Code's status line and `/usage` refresh it.
+            Some(captured) if stale => {
+                let ago = quota::time_left(now, captured);
+                tr!(
+                    lang,
+                    "seen {ago} ago\ntype /usage",
+                    "relevé il y a {ago}\ntapez /usage"
+                )
+            }
             Some(captured) => {
                 let seen = chrono::DateTime::from_timestamp(captured, 0)
                     .map(|time| {
@@ -80,6 +100,7 @@ impl Reading {
             delegated: known(delegated),
             escalated: known(escalated),
             updated,
+            stale,
         }
     }
 
@@ -91,6 +112,7 @@ impl Reading {
         gauge.set_delegated(self.delegated);
         gauge.set_escalated(self.escalated);
         gauge.set_updated(self.updated.clone().into());
+        gauge.set_stale(self.stale);
     }
 }
 
@@ -98,6 +120,7 @@ impl Reading {
 pub fn feed(gauge: &GaugeWindow, env: Env, data_dir: PathBuf, lang: Lang) {
     let weak = gauge.as_weak();
     thread::spawn(move || {
+        let usage_cache = quota::usage_cache(&env);
         let mut delegated = None;
         let mut measured: Option<Instant> = None;
         loop {
@@ -106,7 +129,7 @@ pub fn feed(gauge: &GaugeWindow, env: Env, data_dir: PathBuf, lang: Lang) {
                 delegated = usage::claude_code(&env, since).delegated_share();
                 measured = Some(Instant::now());
             }
-            let reading = Reading::read(&data_dir, lang, delegated, quota::now());
+            let reading = Reading::read(&data_dir, &usage_cache, lang, delegated, quota::now());
             if weak
                 .upgrade_in_event_loop(move |gauge| reading.show(&gauge))
                 .is_err()
@@ -238,18 +261,20 @@ mod tests {
             delegated: 22.0,
             escalated: 5.0,
             updated: "read at 10:00".into(),
+            stale: true,
         };
         reading.show(&gauge);
         assert_eq!(gauge.get_five_hour(), 85.0);
         assert_eq!(gauge.get_level(), 2);
         assert_eq!(gauge.get_five_hour_reset(), "resets in 40 min");
         assert_eq!(gauge.get_updated(), "read at 10:00");
+        assert!(gauge.get_stale());
     }
 
     #[test]
     fn without_data_everything_is_unknown() {
         let dir = tempfile::tempdir().unwrap();
-        let reading = Reading::read(dir.path(), Lang::En, None, 1_800_000_000);
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, 1_800_000_000);
         assert_eq!(reading.five_hour, -1.0);
         assert_eq!(reading.seven_day, -1.0);
         assert_eq!(reading.level, -1);
@@ -282,7 +307,7 @@ mod tests {
         ];
         std::fs::write(report::journal_path(dir.path()), journal.join("\n")).unwrap();
 
-        let reading = Reading::read(dir.path(), Lang::Fr, Some(12.0), now);
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::Fr, Some(12.0), now);
         assert_eq!(reading.five_hour, 62.4);
         assert_eq!(reading.seven_day, 41.0);
         assert_eq!(
@@ -293,5 +318,61 @@ mod tests {
         assert_eq!(reading.delegated, 12.0);
         assert_eq!(reading.escalated, 50.0);
         assert!(reading.updated.starts_with("quota relevé à"));
+        assert!(!reading.stale);
+    }
+
+    /// A `.claude.json` that does not exist: `/usage` never ran.
+    fn no_cache(dir: &tempfile::TempDir) -> PathBuf {
+        dir.path().join(".claude.json")
+    }
+
+    #[test]
+    fn an_old_reading_says_so_then_expires() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = 1_800_000_000;
+        Quota {
+            captured_at: now - 2 * 3600,
+            five_hour: Some(quota::Window {
+                used_percentage: 13.0,
+                resets_at: now + 14 * 60,
+            }),
+            seven_day: None,
+        }
+        .save(dir.path())
+        .unwrap();
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::Fr, None, now);
+        assert!(reading.stale);
+        assert_eq!(reading.five_hour, 13.0);
+        assert_eq!(reading.updated, "relevé il y a 2 h\ntapez /usage");
+
+        let later = now + 15 * 60;
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, later);
+        assert_eq!(reading.five_hour, -1.0);
+        assert_eq!(reading.five_hour_reset, "quota expired");
+    }
+
+    #[test]
+    fn a_fresher_usage_cache_replaces_the_status_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = 1_800_000_000;
+        Quota {
+            captured_at: now - 2 * 3600,
+            five_hour: Some(quota::Window {
+                used_percentage: 13.0,
+                resets_at: now + 14 * 60,
+            }),
+            seven_day: None,
+        }
+        .save(dir.path())
+        .unwrap();
+        let cache = serde_json::json!({"cachedUsageUtilization": {
+            "fetchedAtMs": (now - 60) * 1000,
+            "utilization": {"five_hour": {"utilization": 19, "resets_at": "2027-01-15T08:40:00+00:00"}}
+        }});
+        std::fs::write(no_cache(&dir), cache.to_string()).unwrap();
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, now);
+        assert_eq!(reading.five_hour, 19.0);
+        assert!(!reading.stale);
+        assert_eq!(reading.five_hour_reset, "resets in 40 min");
     }
 }

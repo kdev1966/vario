@@ -158,7 +158,15 @@ pub(crate) fn open_gauge(
 ) -> Result<GaugeWindow, slint::PlatformError> {
     let gauge = GaugeWindow::new()?;
     select_translation(lang);
-    gauge::Reading::read(&data_dir, lang, None, vario_core::quota::now()).show(&gauge);
+    let usage_cache = vario_core::quota::usage_cache(&env);
+    gauge::Reading::read(
+        &data_dir,
+        &usage_cache,
+        lang,
+        None,
+        vario_core::quota::now(),
+    )
+    .show(&gauge);
     gauge::feed(&gauge, env, data_dir, lang);
     Ok(gauge)
 }

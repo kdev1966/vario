@@ -20,6 +20,8 @@ export component GaugeWindow inherits Window {
     in property <float> delegated: -1;
     in property <float> escalated: -1;
     in property <string> updated;
+    // The quota was seen too long ago: the needle and the readout turn grey.
+    in property <bool> stale;
 
     callback close-gauge();
     callback open-main();
@@ -134,7 +136,7 @@ export component GaugeWindow inherits Window {
             y: root.cy * 1px - 80px;
             width: 2px;
             height: 80px;
-            background: #f1f2f6;
+            background: root.stale ? Theme.muted : #f1f2f6;
             transform-origin: { x: 1px, y: 80px };
             transform-rotation: root.needle;
             animate transform-rotation { duration: 700ms; easing: ease-out; }
@@ -143,7 +145,7 @@ export component GaugeWindow inherits Window {
                 y: 0;
                 width: 2px;
                 height: 14px;
-                background: Theme.red;
+                background: root.stale ? Theme.muted : Theme.red;
             }
         }
         // The pivot's cover, and the glass's reflection.
@@ -175,7 +177,7 @@ export component GaugeWindow inherits Window {
         y: 152px;
         width: root.width;
         text: root.percent(root.five-hour);
-        color: root.five-hour >= 80 ? Theme.red : root.five-hour >= 50 ? Theme.amber : Theme.text;
+        color: root.stale ? Theme.muted : root.five-hour >= 80 ? Theme.red : root.five-hour >= 50 ? Theme.amber : Theme.text;
         font-size: 24px;
         font-weight: 800;
         horizontal-alignment: center;
@@ -298,8 +300,8 @@ export component GaugeWindow inherits Window {
         border-color: Theme.edge;
         Text {
             text: root.updated;
-            color: Theme.muted;
-            font-size: 9px;
+            color: root.stale ? Theme.amber : Theme.muted;
+            font-size: root.stale ? 8px : 9px;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

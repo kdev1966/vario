@@ -32,6 +32,11 @@ All notable changes to Vario are listed here. The format follows
 - The interface no longer mixes languages when an agent starts it with another `LANG`
   than the system's (OpenCode with `en_US`): its labels now follow the same language
   as its values.
+- The gauge no longer shows an old quota as the current one. Claude Code's VS Code
+  extension has no status line, so the gauge also reads the quota that Claude Code
+  keeps in `.claude.json` (refreshed when a session starts and by `/usage`), and
+  shows the more recent reading. Seen more than 15 minutes ago, the quota turns grey
+  with how old it is; once its window has passed, the gauge says it expired.
 
 ## [0.2.1] - 2026-10-16
 
