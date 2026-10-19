@@ -8,7 +8,7 @@ mod cursor;
 mod gemini;
 mod opencode;
 pub mod subagents;
-mod vscode;
+pub(crate) mod vscode;
 
 use std::collections::HashMap;
 use std::env;

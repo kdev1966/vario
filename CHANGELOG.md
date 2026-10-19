@@ -37,6 +37,15 @@ All notable changes to Vario are listed here. The format follows
   keeps in `.claude.json` (refreshed when a session starts and by `/usage`), and
   shows the more recent reading. Seen more than 15 minutes ago, the quota turns grey
   with how old it is; once its window has passed, the gauge says it expired.
+- The gauge keeps the last known quota on screen, greyed, once its window has passed,
+  instead of going blank; the thermostat still only lights from a window that is
+  current.
+- The gauge follows the client you are working in. Only Claude Code has a subscription
+  quota; when the session in use is another client, the gauge shows that client instead
+  of a stale quota. OpenCode reports its model, tokens and cost, so the gauge shows
+  them; Copilot's hooks carry none of that, so the gauge shows the model it reads from
+  VS Code's local chat store, and the client alone when it cannot. Run
+  `vario doctor --fix` (or **Repair**) to add the reports to an existing setup.
 
 ## [0.2.1] - 2026-10-16
 

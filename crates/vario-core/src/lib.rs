@@ -1,6 +1,7 @@
 //! Core library of Vario. The CLI, the hooks, the MCP server and the interface are
 //! thin front ends over it.
 
+pub mod active;
 pub mod choices;
 pub mod clients;
 pub mod error;

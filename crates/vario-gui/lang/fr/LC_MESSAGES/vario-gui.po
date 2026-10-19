@@ -172,3 +172,27 @@ msgstr "ESCALADES"
 msgctxt "GaugeWindow"
 msgid "open Vario ↗"
 msgstr "ouvrir Vario ↗"
+
+msgctxt "GaugeWindow"
+msgid "MODEL"
+msgstr "MODÈLE"
+
+msgctxt "GaugeWindow"
+msgid "tokens out"
+msgstr "jetons sortis"
+
+msgctxt "GaugeWindow"
+msgid "INPUT"
+msgstr "ENTRÉE"
+
+msgctxt "GaugeWindow"
+msgid "SESSION"
+msgstr "SESSION"
+
+msgctxt "GaugeWindow"
+msgid "CACHE"
+msgstr "CACHE"
+
+msgctxt "GaugeWindow"
+msgid "COST"
+msgstr "COÛT"

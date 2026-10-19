@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use vario_core::active::Active;
 use vario_core::clients::Env;
 use vario_core::lang::Lang;
 use vario_core::quota::{self, Level, Quota};
@@ -31,6 +32,18 @@ pub struct Reading {
     pub updated: String,
     /// The quota was seen too long ago to be the quota of the moment.
     pub stale: bool,
+    /// The client in use is not Claude Code, which alone has a quota: show its model
+    /// (and its usage when the client reports any) instead of the quota.
+    pub other: bool,
+    /// The active client reported tokens or a cost; without them, show the model alone.
+    pub usage: bool,
+    /// e.g. "OpenCode · build", or "VS Code (Copilot)".
+    pub client: String,
+    pub model: String,
+    pub output: String,
+    pub input: String,
+    pub cache: String,
+    pub cost: String,
 }
 
 impl Reading {
@@ -45,31 +58,41 @@ impl Reading {
         now: i64,
     ) -> Reading {
         let quota = Quota::latest(data_dir, usage_cache);
-        let (five, seven) = quota
+        // The current window, or the last one seen once it has passed its reset: the
+        // gauge keeps showing the last reading, greyed, instead of going blank.
+        let (live_five, live_seven) = quota
             .as_ref()
             .map_or((None, None), |quota| quota.current(now));
-        let five_hour_reset = match five {
-            Some(window) => {
+        let five = live_five.or_else(|| quota.as_ref().and_then(|quota| quota.five_hour));
+        let seven = live_seven.or_else(|| quota.as_ref().and_then(|quota| quota.seven_day));
+        let five_hour_reset = match (live_five, five) {
+            (Some(window), _) => {
                 let left = quota::time_left(window.resets_at, now);
                 tr!(lang, "resets in {left}", "remise à zéro dans {left}")
             }
-            None if quota.is_some() => tr!(lang, "quota expired", "quota expiré"),
-            None => tr!(lang, "no quota yet", "pas encore de quota"),
+            (None, Some(_)) => tr!(lang, "quota expired", "quota expiré"),
+            (None, None) => tr!(lang, "no quota yet", "pas encore de quota"),
         };
-        let stale = quota.as_ref().is_some_and(|quota| quota.is_stale(now));
-        // No current window (none seen yet, or all past their reset): unknown.
-        let level = match quota.as_ref().map(|quota| quota.level(now)) {
-            _ if five.is_none() && seven.is_none() => -1,
-            None | Some(Level::Normal) => 0,
-            Some(Level::Reinforced) => 1,
-            Some(Level::Alert) => 2,
-            Some(Level::Limit) => 3,
+        // Grey it out when the reading is old, or once the window it shows has expired.
+        let stale = quota.as_ref().is_some_and(|quota| quota.is_stale(now))
+            || (live_five.is_none() && five.is_some())
+            || (live_seven.is_none() && seven.is_some());
+        // The thermostat only advises from a window that is still current.
+        let level = if live_five.is_none() && live_seven.is_none() {
+            -1
+        } else {
+            match quota.as_ref().map(|quota| quota.level(now)) {
+                None | Some(Level::Normal) => 0,
+                Some(Level::Reinforced) => 1,
+                Some(Level::Alert) => 2,
+                Some(Level::Limit) => 3,
+            }
         };
         let journal = report::summarize(data_dir).unwrap_or_default();
         let escalated = (journal.total.delegations > 0)
             .then(|| journal.total.escalated as f64 * 100.0 / journal.total.delegations as f64);
         // Short: the gauge is narrow.
-        let updated = match quota.map(|quota| quota.captured_at) {
+        let updated = match quota.as_ref().map(|quota| quota.captured_at) {
             // Only Claude Code's status line and `/usage` refresh it.
             Some(captured) if stale => {
                 let ago = quota::time_left(now, captured);
@@ -92,15 +115,62 @@ impl Reading {
             None => tr!(lang, "no quota yet", "pas encore de quota"),
         };
         let known = |value: Option<f64>| value.map_or(-1.0, |value| value as f32);
+        // Claude Code only writes the quota while it runs; another client reports its own
+        // session. Show whichever was seen most recently.
+        let active = Active::load(data_dir);
+        let claude_at = quota.as_ref().map(|quota| quota.captured_at);
+        let other = active
+            .as_ref()
+            .is_some_and(|active| claude_at.is_none_or(|claude| active.at > claude));
+        // Not every client reports tokens: Copilot's hooks carry none, and the gauge then
+        // shows the model alone where the figures would be.
+        let usage = active.as_ref().is_some_and(|active| {
+            active.output > 0
+                || active.input > 0
+                || active.reasoning > 0
+                || active.cache_read > 0
+                || active.cache_write > 0
+                || active.cost > 0.0
+        });
+        let (client, model, output, input, cache, cost) = match active.as_ref() {
+            Some(active) if other => (
+                match active.agent.is_empty() {
+                    true => display(&active.client).to_string(),
+                    false => format!("{} · {}", display(&active.client), active.agent),
+                },
+                active.label().to_string(),
+                usage::human(active.output),
+                usage::human(active.input),
+                usage::human(active.cache_read),
+                money(active.cost),
+            ),
+            _ => Default::default(),
+        };
         Reading {
-            five_hour: known(five.map(|w| w.used_percentage)),
+            five_hour: if other {
+                -1.0
+            } else {
+                known(five.map(|window| window.used_percentage))
+            },
             five_hour_reset,
-            seven_day: known(seven.map(|w| w.used_percentage)),
-            level,
+            seven_day: if other {
+                -1.0
+            } else {
+                known(seven.map(|window| window.used_percentage))
+            },
+            level: if other { -1 } else { level },
             delegated: known(delegated),
             escalated: known(escalated),
             updated,
             stale,
+            other,
+            usage,
+            client,
+            model,
+            output,
+            input,
+            cache,
+            cost,
         }
     }
 
@@ -113,7 +183,33 @@ impl Reading {
         gauge.set_escalated(self.escalated);
         gauge.set_updated(self.updated.clone().into());
         gauge.set_stale(self.stale);
+        gauge.set_other(self.other);
+        gauge.set_usage(self.usage);
+        gauge.set_client(self.client.clone().into());
+        gauge.set_model(self.model.clone().into());
+        gauge.set_output(self.output.clone().into());
+        gauge.set_input(self.input.clone().into());
+        gauge.set_cache(self.cache.clone().into());
+        gauge.set_cost(self.cost.clone().into());
     }
+}
+
+/// A cost in dollars, short: the gauge is narrow.
+fn money(cost: f64) -> String {
+    if cost <= 0.0 {
+        "$0.00".into()
+    } else if cost < 0.01 {
+        "<$0.01".into()
+    } else {
+        format!("${cost:.2}")
+    }
+}
+
+/// A client's own label ("VS Code (Copilot)"), else its id as reported.
+fn display(client: &str) -> &str {
+    vario_core::clients::by_name(client)
+        .map(|integration| integration.label)
+        .unwrap_or(client)
 }
 
 /// Keep the gauge up to date from a background thread, until the window is gone.
@@ -262,6 +358,14 @@ mod tests {
             escalated: 5.0,
             updated: "read at 10:00".into(),
             stale: true,
+            other: false,
+            usage: false,
+            client: String::new(),
+            model: String::new(),
+            output: String::new(),
+            input: String::new(),
+            cache: String::new(),
+            cost: String::new(),
         };
         reading.show(&gauge);
         assert_eq!(gauge.get_five_hour(), 85.0);
@@ -269,6 +373,7 @@ mod tests {
         assert_eq!(gauge.get_five_hour_reset(), "resets in 40 min");
         assert_eq!(gauge.get_updated(), "read at 10:00");
         assert!(gauge.get_stale());
+        assert!(!gauge.get_other());
     }
 
     #[test]
@@ -347,7 +452,11 @@ mod tests {
 
         let later = now + 15 * 60;
         let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, later);
-        assert_eq!(reading.five_hour, -1.0);
+        assert_eq!(
+            reading.five_hour, 13.0,
+            "the last known value stays, greyed, once the window has expired"
+        );
+        assert!(reading.stale);
         assert_eq!(reading.five_hour_reset, "quota expired");
     }
 
@@ -374,5 +483,88 @@ mod tests {
         assert_eq!(reading.five_hour, 19.0);
         assert!(!reading.stale);
         assert_eq!(reading.five_hour_reset, "resets in 40 min");
+    }
+
+    fn quota_at(dir: &tempfile::TempDir, captured: i64) {
+        Quota {
+            captured_at: captured,
+            five_hour: Some(quota::Window {
+                used_percentage: 13.0,
+                resets_at: captured + 3600,
+            }),
+            seven_day: None,
+        }
+        .save(dir.path())
+        .unwrap();
+    }
+
+    fn active_at(dir: &tempfile::TempDir, at: i64) {
+        Active {
+            client: "opencode".into(),
+            model: "deepseek-v4.1-flash-free".into(),
+            agent: "build".into(),
+            output: 32_777,
+            input: 1_081_226,
+            cache_read: 3_509_632,
+            cost: 0.42,
+            at,
+            ..Active::default()
+        }
+        .save(dir.path())
+        .unwrap();
+    }
+
+    #[test]
+    fn the_client_seen_last_takes_the_gauge() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = 1_800_000_000;
+        quota_at(&dir, now - 2 * 3600);
+        active_at(&dir, now - 5);
+
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, now);
+        assert!(reading.other);
+        assert!(reading.usage);
+        assert_eq!(reading.client, "OpenCode · build");
+        assert_eq!(reading.model, "deepseek-v4.1-flash-free");
+        assert_eq!(reading.output, "32.8 k");
+        assert_eq!(reading.input, "1.1 M");
+        assert_eq!(reading.cache, "3.5 M");
+        assert_eq!(reading.cost, "$0.42");
+        assert_eq!(reading.five_hour, -1.0, "the quota steps aside");
+        assert_eq!(reading.level, -1);
+    }
+
+    #[test]
+    fn a_fresher_quota_keeps_the_gauge() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = 1_800_000_000;
+        quota_at(&dir, now - 30);
+        active_at(&dir, now - 2 * 3600);
+
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, now);
+        assert!(!reading.other);
+        assert_eq!(reading.five_hour, 13.0);
+        assert_eq!(reading.model, "");
+    }
+
+    #[test]
+    fn a_client_without_usage_shows_its_model_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = 1_800_000_000;
+        quota_at(&dir, now - 2 * 3600);
+        Active {
+            client: "vscode".into(),
+            model: "copilot/auto".into(),
+            at: now - 5,
+            ..Active::default()
+        }
+        .save(dir.path())
+        .unwrap();
+
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::Fr, None, now);
+        assert!(reading.other);
+        assert!(!reading.usage, "Copilot reports no tokens");
+        assert_eq!(reading.client, "VS Code (Copilot)");
+        assert_eq!(reading.model, "copilot/auto");
     }
 }

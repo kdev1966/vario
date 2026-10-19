@@ -10,6 +10,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
+use crate::active::Active;
 use crate::clients::subagents::{self, SESSION_CONTEXT};
 use crate::clients::{Env, by_name};
 use crate::gui;
@@ -37,6 +38,8 @@ pub enum Event {
     SubagentStop,
     /// Before each prompt: the thermostat's advice, from the quota.
     PromptSubmit,
+    /// The client's current session and its usage, for the gauge.
+    Activity,
 }
 
 impl Event {
@@ -45,6 +48,7 @@ impl Event {
             "session-start" => Some(Event::SessionStart),
             "subagent-stop" => Some(Event::SubagentStop),
             "prompt-submit" => Some(Event::PromptSubmit),
+            "activity" => Some(Event::Activity),
             _ => None,
         }
     }
@@ -121,6 +125,20 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
         // The quota is Claude Code's subscription; inside Cursor it says nothing.
         Event::PromptSubmit if in_cursor => quiet(via),
         Event::PromptSubmit => thermostat(env, data_dir).unwrap_or_else(|| quiet(via)),
+        // What the gauge shows when this client, not Claude Code, is the active one.
+        Event::Activity => {
+            let mut report = Active::from_report(via.name(), &input, quota::now());
+            // Copilot's hooks carry no model; the gauge reads it from VS Code's store.
+            if via == Via::VsCode {
+                let cwd = input.get("cwd").and_then(Value::as_str).unwrap_or_default();
+                report.directory = cwd.to_string();
+                report.model = crate::clients::vscode::current_model(env, cwd).unwrap_or_default();
+            }
+            if let Err(err) = report.save(data_dir) {
+                log(data_dir, &format!("activity: {err}"));
+            }
+            quiet(via)
+        }
         Event::SubagentStop => {
             let client = if in_cursor { "cursor" } else { via.name() };
             if let Err(err) = record(&input, client, &env.home, data_dir) {
@@ -624,6 +642,32 @@ mod tests {
             dir.path(),
         );
         assert!(out.contains("additionalContext"), "{out}");
+    }
+
+    #[test]
+    fn the_activity_hook_records_the_active_client() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = json!({
+            "model": "deepseek-v4.1-flash-free",
+            "agent": "build",
+            "output": 32_777,
+            "cache_read": 3_509_632,
+            "cost": 0.0
+        })
+        .to_string();
+        let out = run(
+            Event::Activity,
+            Via::OpenCode,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+        assert_eq!(out, "");
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "opencode");
+        assert_eq!(active.model, "deepseek-v4.1-flash-free");
+        assert_eq!(active.output, 32_777);
+        assert_eq!(active.cache_read, 3_509_632);
     }
 
     #[test]

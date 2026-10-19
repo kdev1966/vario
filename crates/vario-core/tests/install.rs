@@ -853,6 +853,9 @@ fn vscode_install_then_remove() {
             "SubagentStop": [
                 {"type": "command", "command": "vario hook subagent-stop --via vscode", "timeout": 10}
             ],
+            "Stop": [
+                {"type": "command", "command": "vario hook activity --via vscode", "timeout": 5}
+            ],
         }})
     );
 
