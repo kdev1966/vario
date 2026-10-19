@@ -270,16 +270,19 @@ function showReport(report) {
       <div class="figure" style="left:calc(50% - 66px)">${row.escalated}</div>
       <div class="figure" style="left:calc(50% + 6px)">${row.without_footer}</div>`;
     $("channels").append(channel);
-    const middle = channel.getBoundingClientRect().width / 2;
-    setKnob(knob(channel, middle - 66, 88, t("ESCALATED")), row.escalated_share);
-    setKnob(knob(channel, middle + 6, 88, t("NO FOOTER")), row.without_footer_share);
+    // Placed against the card's middle: the page may be hidden, without a width, now.
+    setKnob(knob(channel, "calc(50% - 66px)", 88, t("ESCALATED")), row.escalated_share);
+    setKnob(knob(channel, "calc(50% + 6px)", 88, t("NO FOOTER")), row.without_footer_share);
   }
 }
 
-async function refresh() {
-  showStatus(await invoke("status"));
-  showChoices(await invoke("choices"));
-  showReport(await invoke("report"));
+// Side by side: the clients' state takes a second or more, the rest shows meanwhile.
+function refresh() {
+  return Promise.all([
+    invoke("status").then(showStatus),
+    invoke("choices").then(showChoices),
+    invoke("report").then(showReport),
+  ]);
 }
 
 async function start() {
@@ -288,6 +291,8 @@ async function start() {
   [...$("pages").children].forEach((key, index) => key.addEventListener("click", () => openPage(index)));
   $("version").textContent = `${t("VERSION")} ${await invoke("version")}`;
   openPage(Number(await invoke("first_page")));
+  // Each time the window comes back: what was read shows at once, then is read again.
+  await listen("shown", () => refresh());
   await refresh();
 }
 

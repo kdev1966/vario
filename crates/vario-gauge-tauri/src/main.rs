@@ -8,7 +8,7 @@
 mod shell;
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -35,13 +35,21 @@ struct Ctx {
     env: Env,
     data_dir: PathBuf,
     lang: Lang,
-    panel: Mutex<Panel>,
+    /// Read by the pages' looks (status, choices, report) side by side; written by the
+    /// ticks and the installs.
+    panel: RwLock<Panel>,
 }
 
 impl Ctx {
-    fn panel(&self) -> std::sync::MutexGuard<'_, Panel> {
+    fn panel(&self) -> RwLockReadGuard<'_, Panel> {
         self.panel
-            .lock()
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn panel_mut(&self) -> RwLockWriteGuard<'_, Panel> {
+        self.panel
+            .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
@@ -107,7 +115,7 @@ async fn report(ctx: State<'_, Ctx>) -> Result<Report, String> {
 #[tauri::command]
 async fn reset_candidates(ctx: State<'_, Ctx>) -> Result<Vec<Choice>, String> {
     Ok({
-        let mut panel = ctx.panel();
+        let mut panel = ctx.panel_mut();
         panel.reset_candidates();
         panel.choices()
     })
@@ -116,7 +124,7 @@ async fn reset_candidates(ctx: State<'_, Ctx>) -> Result<Vec<Choice>, String> {
 #[tauri::command]
 async fn toggle(ctx: State<'_, Ctx>, index: usize, checked: bool) -> Result<Vec<Choice>, String> {
     Ok({
-        let mut panel = ctx.panel();
+        let mut panel = ctx.panel_mut();
         panel.toggle(index, checked);
         panel.choices()
     })
@@ -134,17 +142,17 @@ async fn preview(ctx: State<'_, Ctx>) -> Result<Plan, String> {
 
 #[tauri::command]
 async fn apply(ctx: State<'_, Ctx>) -> Result<String, String> {
-    Ok(ctx.panel().apply())
+    Ok(ctx.panel_mut().apply())
 }
 
 #[tauri::command]
 async fn repair(ctx: State<'_, Ctx>) -> Result<Option<String>, String> {
-    Ok(ctx.panel().repair())
+    Ok(ctx.panel_mut().repair())
 }
 
 #[tauri::command]
 async fn remove_all(ctx: State<'_, Ctx>) -> Result<String, String> {
-    Ok(ctx.panel().remove_all())
+    Ok(ctx.panel_mut().remove_all())
 }
 
 #[tauri::command]
@@ -185,7 +193,7 @@ fn main() {
         return;
     };
     let ctx = Ctx {
-        panel: Mutex::new(Panel::new(env.clone(), data_dir.clone(), lang)),
+        panel: RwLock::new(Panel::new(env.clone(), data_dir.clone(), lang)),
         env,
         data_dir,
         lang,
@@ -221,6 +229,9 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle().clone();
             shell::show(&handle, want);
+            // Ready before it is asked for: the web view and the clients' state take
+            // seconds to come up.
+            shell::prepare_main(&handle);
             feed(handle.clone());
             shell::follow_agent_apps(handle.clone());
             listen(handle, lock_dir);

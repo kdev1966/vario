@@ -29,10 +29,11 @@ function knobArc(from, to) {
   const [x0, y0] = p(from), [x1, y1] = p(to);
   return `M${x0} ${y0} A${r} ${r} 0 ${to - from > 180 ? 1 : 0} 1 ${x1} ${y1}`;
 }
+/** `left` is in pixels, or any CSS length (`calc(50% - 66px)` centres it on its card). */
 function knob(parent, left, top, caption) {
   const node = document.createElement("div");
   node.className = "abs knob";
-  node.style.cssText = `left:${left}px;top:${top}px`;
+  node.style.cssText = `left:${typeof left === "number" ? left + "px" : left};top:${top}px`;
   node.innerHTML = `<svg class="abs" style="left:0;top:0" width="60" height="60" viewBox="0 0 60 60">
       <path d="${knobArc(-135, 135)}" stroke="var(--unlit)" stroke-width="4" fill="none"/>
       <path class="value" stroke="var(--amber)" stroke-width="4" fill="none"/></svg>

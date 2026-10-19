@@ -10,8 +10,8 @@ use std::thread;
 use std::time::Duration;
 
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window,
-    WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    Window, WindowEvent,
 };
 use vario_core::dock::{self, Rect, Side};
 use vario_core::instance::Want;
@@ -121,30 +121,36 @@ fn place_gauge(app: &AppHandle, gauge: &WebviewWindow) {
     }
 }
 
+/// The main window, built hidden if it is not there yet: its page loads and reads the
+/// clients' state meanwhile.
+pub fn prepare_main(app: &AppHandle) -> Option<WebviewWindow> {
+    if let Some(main) = app.get_webview_window(MAIN) {
+        return Some(main);
+    }
+    WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("main.html".into()))
+        .title("Vario")
+        .inner_size(640.0, 494.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .visible(false)
+        .build()
+        .ok()
+}
+
 fn show_main(app: &AppHandle) {
+    let Some(main) = prepare_main(app) else {
+        return;
+    };
     // A window with a Dock icon while the main window is open.
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-    let main = match app.get_webview_window(MAIN) {
-        Some(main) => main,
-        None => {
-            let Ok(main) =
-                WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("main.html".into()))
-                    .title("Vario")
-                    .inner_size(640.0, 494.0)
-                    .resizable(false)
-                    .decorations(false)
-                    .transparent(true)
-                    .shadow(false)
-                    .visible(false)
-                    .build()
-            else {
-                return;
-            };
-            place_main(app, &main);
-            main
-        }
-    };
+    if !main.is_visible().unwrap_or(false) {
+        place_main(app, &main);
+        // The page shows what it read before, and reads it again.
+        let _ = main.emit("shown", ());
+    }
     let _ = main.show();
     let _ = main.set_focus();
 }
@@ -164,9 +170,31 @@ fn place_main(app: &AppHandle, main: &WebviewWindow) {
     app.state::<Shell>().with(|d| d.docked = Some(side));
 }
 
+/// Close the gauge, or put the main window away (kept ready, hidden). The process ends
+/// when neither shows any more.
 pub fn close(app: &AppHandle, label: &str) {
-    if let Some(window) = app.get_webview_window(label) {
-        let _ = window.close();
+    app.state::<Shell>().with(|d| d.docked = None);
+    let main_shown = || {
+        app.get_webview_window(MAIN)
+            .is_some_and(|main| main.is_visible().unwrap_or(false))
+    };
+    if label == MAIN {
+        if let Some(main) = app.get_webview_window(MAIN) {
+            let _ = main.hide();
+        }
+        // Back to a desktop widget: no Dock icon while only the gauge shows.
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        if app.get_webview_window(GAUGE).is_none() {
+            app.exit(0);
+        }
+    } else {
+        if let Some(gauge) = app.get_webview_window(GAUGE) {
+            let _ = gauge.close();
+        }
+        if !main_shown() {
+            app.exit(0);
+        }
     }
 }
 
@@ -180,14 +208,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     };
     match event {
         WindowEvent::Moved(at) => moved(app, label, at.x, at.y),
-        WindowEvent::Destroyed => {
-            app.state::<Shell>().with(|d| d.docked = None);
-            // Back to a desktop widget: no Dock icon while only the gauge shows.
-            #[cfg(target_os = "macos")]
-            if label == MAIN {
-                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            }
-        }
+        WindowEvent::Destroyed => app.state::<Shell>().with(|d| d.docked = None),
         _ => {}
     }
 }
