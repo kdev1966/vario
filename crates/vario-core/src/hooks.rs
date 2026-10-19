@@ -10,8 +10,10 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
+use crate::active::Active;
 use crate::clients::subagents::{self, SESSION_CONTEXT};
 use crate::clients::{Env, by_name};
+use crate::gui;
 use crate::install;
 use crate::lang::Lang;
 use crate::parts::Kind;
@@ -36,6 +38,8 @@ pub enum Event {
     SubagentStop,
     /// Before each prompt: the thermostat's advice, from the quota.
     PromptSubmit,
+    /// The client's current session and its usage, for the gauge.
+    Activity,
 }
 
 impl Event {
@@ -44,6 +48,7 @@ impl Event {
             "session-start" => Some(Event::SessionStart),
             "subagent-stop" => Some(Event::SubagentStop),
             "prompt-submit" => Some(Event::PromptSubmit),
+            "activity" => Some(Event::Activity),
             _ => None,
         }
     }
@@ -58,6 +63,8 @@ pub enum Via {
     OpenCode,
     Codex,
     VsCode,
+    Gemini,
+    Kiro,
 }
 
 impl Via {
@@ -68,6 +75,8 @@ impl Via {
             "opencode" => Some(Via::OpenCode),
             "codex" => Some(Via::Codex),
             "vscode" => Some(Via::VsCode),
+            "gemini" => Some(Via::Gemini),
+            "kiro" => Some(Via::Kiro),
             _ => None,
         }
     }
@@ -79,6 +88,8 @@ impl Via {
             Via::OpenCode => "opencode",
             Via::Codex => "codex",
             Via::VsCode => "vscode",
+            Via::Gemini => "gemini",
+            Via::Kiro => "kiro",
         }
     }
 }
@@ -101,21 +112,96 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
         return quiet(via);
     }
     match event {
-        Event::SessionStart => match via {
-            Via::Cursor | Via::OpenCode => {
-                json!({ "additional_context": SESSION_CONTEXT }).to_string()
+        Event::SessionStart => {
+            gui::open_gauge(env, data_dir);
+            // Cursor takes Vario's guidance from this hook, also when it runs Claude
+            // Code's; the other clients read it from their instructions file.
+            match via {
+                Via::Cursor => json!({ "additional_context": SESSION_CONTEXT }).to_string(),
+                Via::Claude if in_cursor => json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "SessionStart",
+                        "additionalContext": SESSION_CONTEXT,
+                    }
+                })
+                .to_string(),
+                _ => quiet(via),
             }
-            Via::Claude | Via::Codex | Via::VsCode => json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "SessionStart",
-                    "additionalContext": SESSION_CONTEXT,
-                }
-            })
-            .to_string(),
-        },
+        }
         // The quota is Claude Code's subscription; inside Cursor it says nothing.
         Event::PromptSubmit if in_cursor => quiet(via),
-        Event::PromptSubmit => thermostat(env, data_dir).unwrap_or_else(|| quiet(via)),
+        Event::PromptSubmit => {
+            // The status line, which writes the quota, never runs in Claude Code's
+            // VS Code extension: without this, the last other client kept the gauge.
+            if via == Via::Claude {
+                let mut claude = Active::from_report(via.name(), &Map::new(), quota::now());
+                let text = |key: &str| input.get(key).and_then(Value::as_str).unwrap_or_default();
+                claude.directory = text("cwd").to_string();
+                claude.session = text("session_id").to_string();
+                if let Err(err) = claude.save(data_dir) {
+                    log(data_dir, &format!("prompt-submit: {err}"));
+                }
+            }
+            thermostat(env, data_dir).unwrap_or_else(|| quiet(via))
+        }
+        // What the gauge shows when this client, not Claude Code, is the active one.
+        Event::Activity => {
+            let mut report = Active::from_report(via.name(), &input, quota::now());
+            if via == Via::Kiro {
+                report.directory = input
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+            }
+            // Copilot's hooks carry no model nor tokens; the gauge reads them from the
+            // Copilot agent's session log, else the model alone from VS Code's store.
+            if via == Via::VsCode {
+                let cwd = input.get("cwd").and_then(Value::as_str).unwrap_or_default();
+                report.directory = cwd.to_string();
+                if !crate::clients::vscode::read_session(env, &input, &mut report) {
+                    report.model =
+                        crate::clients::vscode::current_model(env, cwd).unwrap_or_default();
+                }
+            }
+            // Gemini CLI's hooks carry neither; its session transcript has both.
+            if via == Via::Gemini {
+                let cwd = input.get("cwd").and_then(Value::as_str).unwrap_or_default();
+                report.directory = cwd.to_string();
+                crate::clients::gemini::read_session(&input, &mut report);
+            }
+            if via == Via::Codex {
+                let text = |key: &str| input.get(key).and_then(Value::as_str).unwrap_or_default();
+                report.session = text("session_id").to_string();
+                report.directory = text("cwd").to_string();
+                report.agent = text("agent_type").to_string();
+            }
+            if via == Via::Cursor {
+                report.session = input
+                    .get("conversation_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                report.directory = input
+                    .get("workspace_roots")
+                    .and_then(Value::as_array)
+                    .and_then(|roots| roots.first())
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if report.model.is_empty() {
+                    report.model = input
+                        .get("model_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                }
+            }
+            if let Err(err) = report.save(data_dir) {
+                log(data_dir, &format!("activity: {err}"));
+            }
+            quiet(via)
+        }
         Event::SubagentStop => {
             let client = if in_cursor { "cursor" } else { via.name() };
             if let Err(err) = record(&input, client, &env.home, data_dir) {
@@ -187,7 +273,7 @@ fn thermostat(env: &Env, data_dir: &Path) -> Option<String> {
 /// accept nothing.
 fn quiet(via: Via) -> String {
     match via {
-        Via::Cursor | Via::Codex | Via::VsCode => "{}".into(),
+        Via::Cursor | Via::Codex | Via::VsCode | Via::Gemini | Via::Kiro => "{}".into(),
         Via::Claude | Via::OpenCode => String::new(),
     }
 }
@@ -592,6 +678,221 @@ mod tests {
         );
         let value: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(value["additional_context"], SESSION_CONTEXT);
+    }
+
+    #[test]
+    fn other_clients_start_quietly() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = env_in(dir.path());
+        for (via, quiet) in [
+            (Via::Claude, ""),
+            (Via::OpenCode, ""),
+            (Via::Codex, "{}"),
+            (Via::VsCode, "{}"),
+            (Via::Gemini, "{}"),
+        ] {
+            assert_eq!(
+                run(Event::SessionStart, via, "{}", &env, dir.path()),
+                quiet,
+                "{via:?}"
+            );
+        }
+        let in_cursor = json!({ "cursor_version": "3.1.0" }).to_string();
+        let out = run(
+            Event::SessionStart,
+            Via::Claude,
+            &in_cursor,
+            &env,
+            dir.path(),
+        );
+        assert!(out.contains("additionalContext"), "{out}");
+    }
+
+    #[test]
+    fn the_activity_hook_records_the_active_client() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = json!({
+            "model": "deepseek-v4.1-flash-free",
+            "agent": "build",
+            "output": 32_777,
+            "cache_read": 3_509_632,
+            "cost": 0.0
+        })
+        .to_string();
+        let out = run(
+            Event::Activity,
+            Via::OpenCode,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+        assert_eq!(out, "");
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "opencode");
+        assert_eq!(active.model, "deepseek-v4.1-flash-free");
+        assert_eq!(active.output, 32_777);
+        assert_eq!(active.cache_read, 3_509_632);
+    }
+
+    #[test]
+    fn a_claude_code_prompt_takes_the_gauge_back() {
+        let dir = tempfile::tempdir().unwrap();
+        Active {
+            client: "vscode".into(),
+            model: "GPT-6 Luna".into(),
+            at: 1,
+            ..Active::default()
+        }
+        .save(dir.path())
+        .unwrap();
+        let input = json!({"cwd": "/work", "session_id": "abc"}).to_string();
+        run(
+            Event::PromptSubmit,
+            Via::Claude,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "claude");
+        assert_eq!(active.model, "");
+        assert_eq!(active.directory, "/work");
+        assert_eq!(active.session, "abc");
+        assert!(active.at > 1);
+    }
+
+    #[test]
+    fn the_vscode_activity_hook_reads_the_copilot_session_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.jsonl");
+        let record = |model: &str, input: u64, read: u64, write: u64, output: u64| {
+            json!({"type": "session.usage_record", "data": {"usage": {
+                "model": model, "modelDisplayName": "GPT-6 Luna", "inputTokens": input,
+                "cacheReadTokens": read, "cacheWriteTokens": write, "outputTokens": output,
+                "reasoningTokens": 5, "cost": 1.0
+            }}})
+            .to_string()
+        };
+        let lines = [
+            json!({"type": "session.start", "data": {}}).to_string(),
+            record("gpt-6-luna", 18_000, 7_797, 10_200, 136),
+            "not json".to_string(),
+            record("gpt-6-luna", 19_259, 17_997, 1_259, 28),
+        ];
+        fs::write(&log, lines.join("\n")).unwrap();
+        let input = json!({
+            "sessionId": "2288",
+            "transcriptPath": log,
+            "stopReason": "end_turn",
+            "cwd": "/work"
+        })
+        .to_string();
+        run(
+            Event::Activity,
+            Via::VsCode,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "vscode");
+        assert_eq!(active.model, "GPT-6 Luna");
+        assert_eq!(active.input, 3 + 3, "cached tokens are counted apart");
+        assert_eq!(active.output, 164);
+        assert_eq!(active.reasoning, 10);
+        assert_eq!(active.cache_read, 25_794);
+        assert_eq!(active.cache_write, 11_459);
+        assert_eq!(active.cost, 0.0, "premium requests are not dollars");
+        assert_eq!(active.session, "2288");
+        assert_eq!(active.directory, "/work");
+    }
+
+    #[test]
+    fn the_vscode_prompt_hook_accepts_current_snake_case_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.jsonl");
+        fs::write(
+            &log,
+            json!({"type": "session.usage_record", "data": {"usage": {
+                "modelDisplayName": "GPT-6 Luna", "inputTokens": 4, "outputTokens": 2
+            }}})
+            .to_string(),
+        )
+        .unwrap();
+        let input = json!({
+            "session_id": "current-session",
+            "transcript_path": log,
+            "cwd": "/work"
+        })
+        .to_string();
+
+        run(
+            Event::Activity,
+            Via::VsCode,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "vscode");
+        assert_eq!(active.session, "current-session");
+        assert_eq!(active.model, "GPT-6 Luna");
+        assert_eq!(active.input, 4);
+        assert_eq!(active.output, 2);
+    }
+
+    #[test]
+    fn the_cursor_prompt_hook_records_the_active_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = json!({
+            "conversation_id": "cursor-conversation",
+            "model": "Composer",
+            "model_id": "cursor-composer",
+            "workspace_roots": ["/work"]
+        })
+        .to_string();
+
+        run(
+            Event::Activity,
+            Via::Cursor,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "cursor");
+        assert_eq!(active.session, "cursor-conversation");
+        assert_eq!(active.directory, "/work");
+        assert_eq!(active.model, "Composer");
+    }
+
+    #[test]
+    fn the_codex_prompt_hook_records_the_active_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = json!({
+            "session_id": "codex-session",
+            "cwd": "/work",
+            "agent_type": "default",
+            "model": "gpt-6-luna"
+        })
+        .to_string();
+
+        run(
+            Event::Activity,
+            Via::Codex,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "codex");
+        assert_eq!(active.session, "codex-session");
+        assert_eq!(active.directory, "/work");
+        assert_eq!(active.agent, "default");
+        assert_eq!(active.model, "gpt-6-luna");
     }
 
     #[test]

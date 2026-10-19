@@ -288,6 +288,13 @@ fn hook_never_fails() {
 #[test]
 fn cursor_session_start_injects_guidance() {
     let sandbox = Sandbox::new();
+    // The gauge stays closed: a test must not open windows.
+    fs::create_dir_all(sandbox.data_dir()).unwrap();
+    fs::write(
+        sandbox.data_dir().join("setup.json"),
+        r#"{"gauge_on_demand": true}"#,
+    )
+    .unwrap();
     let out = sandbox.run_with_stdin(&["hook", "session-start", "--via", "cursor"], "{}");
     assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
     assert!(out.stdout.trim_start().starts_with('{'), "{}", out.stdout);

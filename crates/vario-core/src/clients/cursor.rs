@@ -5,7 +5,8 @@
 //! Claude model alias; a file of the same name in `.cursor/agents/` takes precedence,
 //! so each Vario sub-agent gets a Cursor twin. Cursor has no instructions file shared
 //! by all projects (its User Rules live in its settings), so a `sessionStart` hook
-//! injects the delegation guidance; a `subagentStop` hook journals each delegation.
+//! injects the delegation guidance; `beforeSubmitPrompt` updates the active client and
+//! `subagentStop` journals each delegation.
 
 use std::path::PathBuf;
 
@@ -69,6 +70,7 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
         Kind::Instructions,
     ));
     parts.push(hook(env, "subagentStop", "subagent-stop", Kind::Hooks));
+    parts.push(hook(env, "beforeSubmitPrompt", "activity", Kind::Hooks));
     parts
 }
 

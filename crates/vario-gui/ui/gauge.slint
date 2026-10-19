@@ -1,123 +1,7 @@
 // The floating gauge: a slim, dark channel strip, like an audio plugin's meter, narrow
-// enough to sit beside a code editor. Everything is drawn as vectors, so it stays sharp
-// at any resolution (Full HD, 4K, Retina). Values below 0 mean "not known yet".
+// enough to sit beside a code editor. Values below 0 mean "not known yet".
 
-// Palette.
-global Theme {
-    out property <color> panel-top: #1e1f25;
-    out property <color> panel-bottom: #121317;
-    out property <color> plate: #17181d;
-    out property <color> edge: #2d2f38;
-    out property <color> text: #e9eaef;
-    out property <color> muted: #8a8d99;
-    out property <color> amber: #e3a23b;
-    out property <color> red: #e2553f;
-    out property <color> green: #47c08a;
-    out property <color> unlit: #25262e;
-}
-
-// Small capital labels, as engraved on a front panel.
-component Caption inherits Text {
-    color: Theme.muted;
-    font-size: 8px;
-    font-weight: 700;
-    letter-spacing: 0.8px;
-    horizontal-alignment: center;
-    // Room above capitals: Slint cuts a text at its own height (É, À).
-    height: 12px;
-    vertical-alignment: bottom;
-}
-
-// A recessed plate grouping one instrument.
-component Plate inherits Rectangle {
-    border-radius: 7px;
-    background: Theme.plate;
-    border-width: 1px;
-    border-color: Theme.edge;
-}
-
-// A small knob: an amber arc over 270 degrees, the value inside, the caption below.
-component Knob {
-    in property <float> value;
-    in property <string> caption;
-    in property <string> shown;
-    property <float> r: 22;
-    property <angle> start: -135deg;
-    property <angle> end: -135deg + 270deg * clamp(root.value, 0, 100) / 100;
-    width: 60px;
-    height: 74px;
-
-    // Track, then value.
-    Path {
-        x: 0;
-        y: 0;
-        width: 60px;
-        height: 60px;
-        viewbox-width: 60;
-        viewbox-height: 60;
-        stroke: Theme.unlit;
-        stroke-width: 4px;
-        MoveTo {
-            x: 30 + root.r * sin(root.start);
-            y: 30 - root.r * cos(root.start);
-        }
-        ArcTo {
-            x: 30 + root.r * sin(135deg);
-            y: 30 - root.r * cos(135deg);
-            radius-x: root.r;
-            radius-y: root.r;
-            sweep: true;
-            large-arc: true;
-        }
-    }
-    if root.value > 0.5: Path {
-        x: 0;
-        y: 0;
-        width: 60px;
-        height: 60px;
-        viewbox-width: 60;
-        viewbox-height: 60;
-        stroke: Theme.amber;
-        stroke-width: 4px;
-        MoveTo {
-            x: 30 + root.r * sin(root.start);
-            y: 30 - root.r * cos(root.start);
-        }
-        ArcTo {
-            x: 30 + root.r * sin(root.end);
-            y: 30 - root.r * cos(root.end);
-            radius-x: root.r;
-            radius-y: root.r;
-            sweep: true;
-            large-arc: root.end - root.start > 180deg;
-        }
-    }
-    // The cap, lit from above.
-    Rectangle {
-        x: 13px;
-        y: 13px;
-        width: 34px;
-        height: 34px;
-        border-radius: 17px;
-        background: @radial-gradient(circle, #3a3c46 0%, #24252c 70%, #1b1c22 100%);
-        border-width: 1px;
-        border-color: #0d0e11;
-        Text {
-            text: root.shown;
-            color: Theme.text;
-            font-size: 10px;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-    }
-    Caption {
-        x: 0;
-        y: 60px;
-        width: 60px;
-        text: root.caption;
-    }
-}
+import { Theme, Caption, Plate, Panel, Logo, CloseButton, Lamp, Knob } from "theme.slint";
 
 export component GaugeWindow inherits Window {
     title: "Vario";
@@ -136,6 +20,22 @@ export component GaugeWindow inherits Window {
     in property <float> delegated: -1;
     in property <float> escalated: -1;
     in property <string> updated;
+    // The quota was seen too long ago: the needle and the readout turn grey.
+    in property <bool> stale;
+    // The client in use is not Claude Code, which alone has a quota: show its model
+    // (and its usage when the client reports any) instead of the meter.
+    in property <bool> other: false;
+    // The active client reported tokens or a cost; without them, show the model alone.
+    in property <bool> usage: false;
+    in property <string> client;
+    in property <string> model;
+    in property <string> output;
+    in property <string> input;
+    in property <string> cache;
+    in property <string> cost;
+    // The quota's plates, or a client that reports its usage; a client without usage
+    // shows its model alone.
+    property <bool> details: !root.other || root.usage;
 
     callback close-gauge();
     callback open-main();
@@ -155,13 +55,9 @@ export component GaugeWindow inherits Window {
 
     // The panel, and a move area under everything: the gauge is dragged from anywhere
     // but its two buttons.
-    Rectangle {
+    Panel {
         width: root.width;
         height: root.height;
-        border-radius: 14px;
-        background: @linear-gradient(180deg, Theme.panel-top 0%, Theme.panel-bottom 100%);
-        border-width: 1px;
-        border-color: Theme.edge;
     }
     WindowMoveArea {
         width: root.width;
@@ -169,49 +65,51 @@ export component GaugeWindow inherits Window {
     }
 
     // Header.
-    Text {
+    Logo {
         x: 12px;
         y: 9px;
-        text: "Vario";
-        color: Theme.amber;
-        font-size: 17px;
-        font-weight: 800;
-        font-italic: true;
     }
-    Rectangle {
+    CloseButton {
         x: root.width - 26px;
         y: 10px;
-        width: 16px;
-        height: 16px;
-        border-radius: 8px;
-        background: close-area.has-hover ? Theme.red : #2a2b33;
-        Text {
-            text: "×";
-            color: Theme.text;
-            font-size: 11px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        close-area := TouchArea {
-            clicked => { root.close-gauge(); }
-        }
+        clicked => { root.close-gauge(); }
     }
 
-    // The needle meter, for the 5-hour quota.
+    // The face: a needle meter for the 5-hour quota, or the model in use.
     Plate {
         x: 12px;
         y: 36px;
         width: 132px;
-        height: 112px;
+        // A client that reports no usage fills the panel with its model alone.
+        height: root.other && !root.usage ? 302px : 112px;
         clip: true;
         // The face, with a soft light from its centre.
         Rectangle {
             x: 3px;
             y: 3px;
             width: 126px;
-            height: 106px;
+            height: root.other && !root.usage ? 296px : 106px;
             border-radius: 5px;
             background: @radial-gradient(circle, #2c2d36 0%, #17181d 85%);
+        }
+        Caption {
+            x: 8px;
+            y: 6px;
+            visible: root.other;
+            text: @tr("MODEL");
+            horizontal-alignment: left;
+        }
+        Text {
+            x: 8px;
+            y: root.other && !root.usage ? 120px : 26px;
+            width: 116px;
+            visible: root.other;
+            text: root.model;
+            wrap: word-wrap;
+            color: Theme.text;
+            font-size: root.other && !root.usage ? 18px : 13px;
+            font-weight: 700;
+            horizontal-alignment: center;
         }
         // Zones: neutral, amber from 50 %, red from 80 %.
         for band in [
@@ -219,6 +117,7 @@ export component GaugeWindow inherits Window {
             { from: 50, to: 80, color: #c58b30 },
             { from: 80, to: 100, color: #d24c38 },
         ]: Path {
+            visible: !root.other;
             width: 132px;
             height: 112px;
             viewbox-width: 132;
@@ -240,6 +139,7 @@ export component GaugeWindow inherits Window {
         }
         // Graduations every 10 %, longer every 50 %.
         for tick in 11: Path {
+            visible: !root.other;
             property <angle> at: root.sweep-start + root.sweep * tick / 10;
             property <float> inner: mod(tick, 5) == 0 ? root.scale-r - 11 : root.scale-r - 7;
             width: 132px;
@@ -258,6 +158,7 @@ export component GaugeWindow inherits Window {
             }
         }
         for mark in [0, 50, 100]: Text {
+            visible: !root.other;
             property <angle> at: root.sweep-start + root.sweep * mark / 100;
             x: (root.cx + 52 * sin(self.at)) * 1px - self.width / 2;
             y: (root.cy - 52 * cos(self.at)) * 1px - self.height / 2;
@@ -268,11 +169,12 @@ export component GaugeWindow inherits Window {
         }
         // The needle, with a red tip, turning around the pivot.
         Rectangle {
+            visible: !root.other;
             x: root.cx * 1px - 1px;
             y: root.cy * 1px - 80px;
             width: 2px;
             height: 80px;
-            background: #f1f2f6;
+            background: root.stale ? Theme.muted : #f1f2f6;
             transform-origin: { x: 1px, y: 80px };
             transform-rotation: root.needle;
             animate transform-rotation { duration: 700ms; easing: ease-out; }
@@ -281,11 +183,12 @@ export component GaugeWindow inherits Window {
                 y: 0;
                 width: 2px;
                 height: 14px;
-                background: Theme.red;
+                background: root.stale ? Theme.muted : Theme.red;
             }
         }
-        // The pivot's cover, and the glass's reflection.
+        // The pivot's cover.
         Rectangle {
+            visible: !root.other;
             x: 0;
             y: 90px;
             width: 132px;
@@ -297,7 +200,9 @@ export component GaugeWindow inherits Window {
                 text: @tr("QUOTA 5 H");
             }
         }
+        // The glass's reflection.
         Rectangle {
+            visible: !root.other;
             x: 3px;
             y: 3px;
             width: 126px;
@@ -307,13 +212,18 @@ export component GaugeWindow inherits Window {
         }
     }
 
-    // The digital readout.
+    // The digital readout: the 5-hour quota, or the tokens the model has written.
     Text {
         x: 0;
         y: 152px;
         width: root.width;
-        text: root.percent(root.five-hour);
-        color: root.five-hour >= 80 ? Theme.red : root.five-hour >= 50 ? Theme.amber : Theme.text;
+        visible: root.details;
+        text: root.other ? root.output : root.percent(root.five-hour);
+        color: root.other ? Theme.text
+            : root.stale ? Theme.muted
+            : root.five-hour >= 80 ? Theme.red
+            : root.five-hour >= 50 ? Theme.amber
+            : Theme.text;
         font-size: 24px;
         font-weight: 800;
         horizontal-alignment: center;
@@ -322,22 +232,24 @@ export component GaugeWindow inherits Window {
         x: 0;
         y: 184px;
         width: root.width;
-        text: root.five-hour-reset;
+        visible: root.details;
+        text: root.other ? @tr("tokens out") : root.five-hour-reset;
         color: Theme.muted;
         font-size: 9px;
         horizontal-alignment: center;
     }
 
-    // The 7-day quota, as a row of lit segments.
+    // The 7-day quota as lit segments, or the tokens the model has read.
     Plate {
         x: 12px;
         y: 204px;
         width: 132px;
         height: 42px;
+        visible: root.details;
         Caption {
             x: 8px;
             y: 3px;
-            text: @tr("7 DAYS");
+            text: root.other ? @tr("INPUT") : @tr("7 DAYS");
             horizontal-alignment: left;
         }
         Text {
@@ -345,14 +257,15 @@ export component GaugeWindow inherits Window {
             y: 3px;
             width: 124px;
             height: 12px;
-            text: root.percent(root.seven-day);
-            color: Theme.text;
-            font-size: 9px;
+            text: root.other ? root.input : root.percent(root.seven-day);
+            color: root.stale ? Theme.muted : Theme.text;
+            font-size: root.other ? 12px : 9px;
             font-weight: 700;
             horizontal-alignment: right;
             vertical-alignment: bottom;
         }
         for segment in 16: Rectangle {
+            visible: !root.other;
             property <bool> lit: root.seven-day >= 0 && (segment + 0.5) * 100 / 16 <= root.seven-day;
             x: 8px + segment * 7.25px;
             y: 22px;
@@ -360,23 +273,73 @@ export component GaugeWindow inherits Window {
             height: 12px;
             border-radius: 1px;
             background: !self.lit ? Theme.unlit
+                : root.stale ? Theme.muted
                 : segment >= 13 ? Theme.red
                 : segment >= 8 ? Theme.amber
                 : Theme.green;
         }
     }
 
-    // The thermostat: one lamp per state, the active one lit.
+    // The thermostat (one lamp per state), or the cache and the cost.
     Plate {
         x: 12px;
         y: 254px;
         width: 132px;
         height: 84px;
+        visible: root.details;
         Caption {
             x: 8px;
             y: 3px;
-            text: @tr("THERMOSTAT");
+            text: root.other ? @tr("SESSION") : @tr("THERMOSTAT");
             horizontal-alignment: left;
+        }
+        Text {
+            x: 10px;
+            y: 26px;
+            width: 114px;
+            height: 16px;
+            visible: root.other;
+            text: @tr("CACHE");
+            color: Theme.muted;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Text {
+            x: 10px;
+            y: 26px;
+            width: 112px;
+            height: 16px;
+            visible: root.other;
+            text: root.cache;
+            color: Theme.text;
+            font-size: 12px;
+            font-weight: 700;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+        Text {
+            x: 10px;
+            y: 50px;
+            width: 114px;
+            height: 16px;
+            visible: root.other;
+            text: @tr("COST");
+            color: Theme.muted;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Text {
+            x: 10px;
+            y: 50px;
+            width: 112px;
+            height: 16px;
+            visible: root.other;
+            text: root.cost;
+            color: Theme.amber;
+            font-size: 12px;
+            font-weight: 700;
+            horizontal-alignment: right;
+            vertical-alignment: center;
         }
         for state[index] in [
             { label: @tr("Normal"), color: #47c08a },
@@ -384,21 +347,17 @@ export component GaugeWindow inherits Window {
             { label: @tr("Alert"), color: #ec7d32 },
             { label: @tr("Limit"), color: #e2553f },
         ]: Rectangle {
+            visible: !root.other;
             property <bool> lit: root.level == index;
             x: 10px;
             y: 20px + index * 15px;
             width: 114px;
             height: 13px;
-            // The lamp, with a glow when lit.
-            Rectangle {
+            Lamp {
                 x: 0;
                 y: 2px;
-                width: 9px;
-                height: 9px;
-                border-radius: 4.5px;
-                background: parent.lit ? state.color : Theme.unlit;
-                drop-shadow-blur: parent.lit ? 6px : 0;
-                drop-shadow-color: state.color;
+                lit: parent.lit;
+                tint: state.color;
             }
             Text {
                 x: 16px;
@@ -440,9 +399,9 @@ export component GaugeWindow inherits Window {
         border-width: 1px;
         border-color: Theme.edge;
         Text {
-            text: root.updated;
-            color: Theme.muted;
-            font-size: 9px;
+            text: root.other ? root.client : root.updated;
+            color: root.other ? Theme.text : root.stale ? Theme.amber : Theme.muted;
+            font-size: root.other || root.stale ? 8px : 9px;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

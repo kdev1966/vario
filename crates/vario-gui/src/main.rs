@@ -1,6 +1,7 @@
 //! Vario's graphical interface: the same core as the `vario` command, for people who
-//! would rather not use a terminal. It installs, checks, repairs and removes Vario,
-//! and shows the delegation journal.
+//! would rather not use a terminal. The floating gauge follows the quota; the main
+//! window installs, checks, repairs and removes Vario, and shows the delegation
+//! journal.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,13 @@ use vario_core::overview::{self, Note};
 use vario_core::parts::Kind;
 use vario_core::{paths, report, tr};
 
+use instance::Want;
+use shell::Shell;
+
+mod dock;
 mod gauge;
+mod instance;
+mod shell;
 
 slint::include_modules!();
 
@@ -28,8 +35,6 @@ struct App {
     lang: Lang,
     /// The clients found on this machine, with whether each is ticked for install.
     candidates: Vec<(&'static str, bool)>,
-    /// The floating gauge, created the first time it is opened.
-    gauge: Option<GaugeWindow>,
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -41,48 +46,43 @@ fn main() -> Result<(), slint::PlatformError> {
         println!("{answer}");
         return Ok(());
     }
-    // `vario-gui --gauge`: the floating gauge alone, as a desktop widget.
-    if args.iter().any(|arg| arg == "--gauge") {
+    // `vario-gui --gauge`: the floating gauge, as a desktop widget.
+    let want = if args.iter().any(|arg| arg == "--gauge") {
+        Want::Gauge
+    } else {
+        Want::Main
+    };
+    let data_dir = paths::data_dir();
+    let Some(_instance) = instance::claim(&data_dir) else {
+        instance::request(&data_dir, want);
+        return Ok(());
+    };
+    if want == Want::Gauge {
         gauge::select_widget_backend()?;
-        let gauge = open_gauge(env.clone(), paths::data_dir(), lang)?;
-        gauge.on_close_gauge(|| {
-            let _ = slint::quit_event_loop();
-        });
-        let main_window: Rc<RefCell<Option<MainWindow>>> = Rc::default();
-        gauge.on_open_main(move || {
-            let mut main_window = main_window.borrow_mut();
-            if main_window.is_none() {
-                *main_window = open(env.clone(), paths::data_dir(), lang).ok();
-            }
-            if let Some((window, _)) = main_window.as_ref() {
-                let _ = window.show();
-            }
-        });
-        gauge.show()?;
-        gauge::float(&gauge);
-        return slint::run_event_loop();
     }
-    let (window, _app) = open(env, paths::data_dir(), lang)?;
-    // Opens on another tab, for screenshots: VARIO_GUI_TAB=0..3.
-    if let Some(tab) = std::env::var("VARIO_GUI_TAB")
-        .ok()
-        .and_then(|tab| tab.parse().ok())
-    {
+    let shell = Shell::new(env, data_dir, lang);
+    shell.show(want);
+    // Opens on another page, for screenshots: VARIO_GUI_TAB=0..3.
+    if let (Some(window), Some(tab)) = (
+        shell.main_window(),
+        std::env::var("VARIO_GUI_TAB")
+            .ok()
+            .and_then(|tab| tab.parse().ok()),
+    ) {
         window.set_current_tab(tab);
     }
-    window.run()
+    shell.listen();
+    slint::run_event_loop()
 }
 
 /// The window, filled and wired to an [`App`] working on `env` and `data_dir`.
-fn open(
+pub(crate) fn open(
     env: Env,
     data_dir: PathBuf,
     lang: Lang,
 ) -> Result<(AppWindow, Rc<RefCell<App>>), slint::PlatformError> {
     let window = AppWindow::new()?;
-    if lang == Lang::Fr {
-        let _ = slint::select_bundled_translation("fr");
-    }
+    select_translation(lang);
     window.set_version(env!("CARGO_PKG_VERSION").into());
 
     let app = Rc::new(RefCell::new(App {
@@ -90,7 +90,6 @@ fn open(
         data_dir,
         lang,
         candidates: Vec::new(),
-        gauge: None,
     }));
     app.borrow_mut().reset_candidates();
     app.borrow().refresh(&window);
@@ -105,7 +104,12 @@ fn open(
         }
     };
     window.on_refresh(on(|app, window| app.refresh(window)));
-    window.on_open_gauge(on(|app, _| app.show_gauge()));
+    {
+        let data_dir = app.borrow().data_dir.clone();
+        window.on_gauge_setting_changed(move |on| {
+            let _ = Choices::set_gauge_with_sessions(&data_dir, on);
+        });
+    }
     window.on_repair(on(App::repair));
     window.on_remove_all(on(App::remove_all));
     window.on_preview(on(App::preview));
@@ -133,20 +137,36 @@ fn open(
     Ok((window, app))
 }
 
+/// Words the `.slint` text in `lang`. Slint picks a bundle from the system locale on
+/// its own, while `lang` may come from `LANG`: an agent that starts the gauge with
+/// `LANG=en_US` must get English labels too, not French ones around English values.
+fn select_translation(lang: Lang) {
+    let _ = slint::select_bundled_translation(match lang {
+        Lang::En => "en",
+        Lang::Fr => "fr",
+    });
+}
+
 /// The main window and the state behind it.
 type MainWindow = (AppWindow, Rc<RefCell<App>>);
 
 /// The floating gauge, fed from a background thread.
-fn open_gauge(
+pub(crate) fn open_gauge(
     env: Env,
     data_dir: PathBuf,
     lang: Lang,
 ) -> Result<GaugeWindow, slint::PlatformError> {
     let gauge = GaugeWindow::new()?;
-    if lang == Lang::Fr {
-        let _ = slint::select_bundled_translation("fr");
-    }
-    gauge::Reading::read(&data_dir, lang, None, vario_core::quota::now()).show(&gauge);
+    select_translation(lang);
+    let usage_cache = vario_core::quota::usage_cache(&env);
+    gauge::Reading::read(
+        &data_dir,
+        &usage_cache,
+        lang,
+        None,
+        vario_core::quota::now(),
+    )
+    .show(&gauge);
     gauge::feed(&gauge, env, data_dir, lang);
     Ok(gauge)
 }
@@ -168,26 +188,6 @@ fn command_line_path(env: &Env) -> PathBuf {
 }
 
 impl App {
-    /// Open the floating gauge beside the main window; closing it only hides it.
-    fn show_gauge(&mut self) {
-        if self.gauge.is_none() {
-            let Ok(gauge) = open_gauge(self.env.clone(), self.data_dir.clone(), self.lang) else {
-                return;
-            };
-            let weak = gauge.as_weak();
-            gauge.on_close_gauge(move || {
-                if let Some(gauge) = weak.upgrade() {
-                    let _ = gauge.hide();
-                }
-            });
-            self.gauge = Some(gauge);
-        }
-        if let Some(gauge) = &self.gauge {
-            let _ = gauge.show();
-            gauge::float(gauge);
-        }
-    }
-
     /// Tick every client found; in manual mode the user unticks the ones to leave out.
     fn reset_candidates(&mut self) {
         self.candidates = install::detected(&self.env)
@@ -228,28 +228,28 @@ impl App {
         let lang = self.lang;
         let choices = Choices::effective(&self.data_dir, &self.env);
         let clients = overview::clients(&self.env, choices.as_ref());
-        let cell = |client: &overview::ClientState, kind: Kind| {
-            match client.status.iter().find(|(k, _)| *k == kind) {
-                Some((_, true)) => "✔",
-                Some((_, false)) => "✗",
-                None => "—",
-            }
-            .into()
+        let state = |client: &overview::ClientState, kind: Kind| match client
+            .status
+            .iter()
+            .find(|(k, _)| *k == kind)
+        {
+            Some((_, true)) => 1,
+            Some((_, false)) => 0,
+            None => -1,
         };
         let rows: Vec<ClientRow> = clients
             .iter()
             .map(|client| ClientRow {
                 label: client.integration.label.into(),
-                subagents: cell(client, Kind::Subagents),
-                instructions: cell(client, Kind::Instructions),
-                hooks: cell(client, Kind::Hooks),
-                quota: cell(client, Kind::Quota),
+                subagents: state(client, Kind::Subagents),
+                instructions: state(client, Kind::Instructions),
+                hooks: state(client, Kind::Hooks),
+                quota: state(client, Kind::Quota),
                 handoff: match client.handoff {
-                    State::Connected => tr!(lang, "connected", "connecté"),
-                    State::NotConnected => tr!(lang, "not connected", "non connecté"),
-                    State::Absent => tr!(lang, "not installed", "non installé"),
-                }
-                .into(),
+                    State::Connected => 1,
+                    State::NotConnected => 0,
+                    State::Absent => -1,
+                },
                 notes: client
                     .notes()
                     .into_iter()
@@ -284,6 +284,7 @@ impl App {
             tr!(lang, "Everything is in place.", "Tout est en place.")
         };
         window.set_status_message(message.into());
+        window.set_gauge_with_sessions(Choices::gauge_with_sessions(&self.data_dir));
         let hint = if clients.iter().any(|client| client.handoff == State::Absent) {
             tr!(
                 lang,
@@ -305,23 +306,28 @@ impl App {
                 return;
             }
         };
-        let share = |count: usize, total: usize| -> SharedString {
-            if count == 0 || total == 0 {
-                count.to_string().into()
+        let share = |count: usize, total: usize| {
+            if total == 0 {
+                -1.0
             } else {
-                format!("{count} ({} %)", (count * 100 + total / 2) / total).into()
+                count as f32 * 100.0 / total as f32
             }
         };
         let mut rows: Vec<ReportRow> = summary
             .agents
             .iter()
             .map(|(agent, counts)| (agent.clone(), counts))
-            .chain(std::iter::once(("Total".to_string(), &summary.total)))
+            .chain(std::iter::once((
+                tr!(lang, "Total", "Total"),
+                &summary.total,
+            )))
             .map(|(agent, counts)| ReportRow {
-                agent: agent.into(),
-                delegations: counts.delegations.to_string().into(),
-                escalated: share(counts.escalated, counts.delegations),
-                without_footer: share(counts.without_footer, counts.delegations),
+                agent: agent.to_uppercase().into(),
+                delegations: counts.delegations as i32,
+                escalated: counts.escalated as i32,
+                escalated_share: share(counts.escalated, counts.delegations),
+                without_footer: counts.without_footer as i32,
+                without_footer_share: share(counts.without_footer, counts.delegations),
             })
             .collect();
         let period = if summary.total.delegations == 0 {
@@ -661,10 +667,11 @@ mod tests {
             .iter()
             .find(|row| row.label == "Claude Code")
             .expect("a Claude Code row");
-        assert_eq!(row.subagents, "✔");
-        assert_eq!(row.instructions, "✔");
-        assert_eq!(row.hooks, "✔");
-        assert_eq!(row.quota, "✔");
+        assert_eq!(
+            (row.subagents, row.instructions, row.hooks, row.quota),
+            (1, 1, 1, 1)
+        );
+        assert_eq!(row.handoff, -1, "Handoff is not installed here");
         assert_eq!(window.get_status_message(), "Everything is in place.");
         let setup = fs::read_to_string(fixture.data_dir.join("setup.json")).unwrap();
         assert!(setup.contains("claude"), "{setup}");
@@ -737,11 +744,13 @@ mod tests {
         let rows: Vec<ReportRow> = window.get_report_rows().iter().collect();
         let worker = rows
             .iter()
-            .find(|row| row.agent == "vario-worker")
-            .expect("a vario-worker row");
-        assert_eq!(worker.delegations, "2");
-        assert_eq!(worker.escalated, "1 (50 %)");
-        assert!(rows.iter().any(|row| row.agent == "Total"));
+            .find(|row| row.agent == "VARIO-WORKER")
+            .expect("a vario-worker channel");
+        assert_eq!(worker.delegations, 2);
+        assert_eq!(worker.escalated, 1);
+        assert_eq!(worker.escalated_share, 50.0);
+        assert_eq!(worker.without_footer_share, 0.0);
+        assert!(rows.iter().any(|row| row.agent == "TOTAL"));
         assert!(window.get_report_period().contains("Delegations from"));
     }
 
@@ -765,50 +774,53 @@ mod tests {
         None
     }
 
-    /// Every `msgid` of the catalogue with a non-empty `msgstr`.
-    fn translated_msgids(po: &str) -> Vec<String> {
-        #[derive(PartialEq)]
-        enum In {
-            Nothing,
-            Id,
-            Str,
-        }
-        let (mut state, mut id, mut string) = (In::Nothing, String::new(), String::new());
+    /// Every (context, text) of the catalogue with a non-empty translation.
+    fn translated(po: &str) -> Vec<(String, String)> {
         let mut found = Vec::new();
-        let mut flush = |id: &mut String, string: &mut String| {
-            if !id.is_empty() && !string.is_empty() {
-                found.push(std::mem::take(id));
-            }
-            id.clear();
-            string.clear();
-        };
+        let (mut context, mut id) = (String::new(), String::new());
         for line in po.lines().map(str::trim) {
-            if let Some(rest) = line.strip_prefix("msgid ") {
-                flush(&mut id, &mut string);
-                state = In::Id;
+            if let Some(rest) = line.strip_prefix("msgctxt ") {
+                context = first_literal(rest).unwrap_or_default();
+            } else if let Some(rest) = line.strip_prefix("msgid ") {
                 id = first_literal(rest).unwrap_or_default();
-            } else if let Some(rest) = line.strip_prefix("msgstr ") {
-                state = In::Str;
-                string = first_literal(rest).unwrap_or_default();
-            } else if line.starts_with('"') {
-                let part = first_literal(line).unwrap_or_default();
-                match state {
-                    In::Id => id += &part,
-                    In::Str => string += &part,
-                    In::Nothing => {}
+            } else if let Some(rest) = line.strip_prefix("msgstr ")
+                && !id.is_empty()
+                && !first_literal(rest).unwrap_or_default().is_empty()
+            {
+                found.push((std::mem::take(&mut context), std::mem::take(&mut id)));
+            }
+        }
+        found
+    }
+
+    /// Every (component, text) marked with `@tr`: Slint looks a text up in the context
+    /// of the component that holds it.
+    fn marked(slint: &str) -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        let mut component = String::new();
+        for line in slint
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+        {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            if let Some(at) = words.iter().position(|word| *word == "component") {
+                component = words.get(at + 1).unwrap_or(&"").to_string();
+            }
+            for rest in line.split("@tr(").skip(1) {
+                if let Some(text) = first_literal(rest) {
+                    found.push((component.clone(), text));
                 }
             }
         }
-        flush(&mut id, &mut string);
         found
     }
 
     #[test]
     fn every_interface_text_is_translated_to_french() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let slint: String = ["app.slint", "gauge.slint"]
+        let marked: Vec<(String, String)> = ["app.slint", "gauge.slint", "theme.slint"]
             .iter()
-            .map(|file| fs::read_to_string(root.join("ui").join(file)).unwrap())
+            .flat_map(|file| marked(&fs::read_to_string(root.join("ui").join(file)).unwrap()))
             .collect();
         let po = fs::read_to_string(
             root.join("lang")
@@ -817,14 +829,9 @@ mod tests {
                 .join("vario-gui.po"),
         )
         .unwrap();
-        let translated = translated_msgids(&po);
-        let texts: Vec<String> = slint
-            .split("@tr(")
-            .skip(1)
-            .filter_map(first_literal)
-            .collect();
-        assert!(texts.len() > 20, "found only {} texts", texts.len());
-        let missing: Vec<&String> = texts
+        let translated = translated(&po);
+        assert!(marked.len() > 30, "found only {} texts", marked.len());
+        let missing: Vec<&(String, String)> = marked
             .iter()
             .filter(|text| !translated.contains(text))
             .collect();

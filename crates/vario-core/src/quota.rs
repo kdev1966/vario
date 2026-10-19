@@ -1,18 +1,27 @@
 //! The subscription quota and the thermostat that reacts to it.
 //!
-//! Claude Code gives its rate limits (5-hour and 7-day windows) only to the status
-//! line command; Vario's status line saves them in `<data>/quota.json`, and the hooks
-//! and the interface read them from there.
+//! Claude Code gives its rate limits (5-hour and 7-day windows) to the status line
+//! command; Vario's status line saves them in `<data>/quota.json`, and the hooks and
+//! the interface read them from there. The VS Code extension has no status line, but
+//! its `/usage` command leaves the limits in `.claude.json`: the gauge reads them there
+//! too, and keeps the more recent of the two readings.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::clients::{Env, claude_code};
 use crate::error::Result;
 use crate::files;
 
 const FILE: &str = "quota.json";
+/// Where `.claude.json` keeps the last answer of `/usage`. Claude Code's own,
+/// undocumented format: read leniently, ignored when it changes.
+const USAGE_CACHE_KEY: &str = "cachedUsageUtilization";
+
+/// A reading older than this may no longer be the quota of the moment.
+pub const STALE_AFTER: i64 = 15 * 60;
 
 /// Thresholds, in percent of the most used window.
 pub const REINFORCED: f64 = 50.0;
@@ -50,6 +59,11 @@ pub fn path(data_dir: &Path) -> PathBuf {
     data_dir.join(FILE)
 }
 
+/// The file where Claude Code caches `/usage`: its `.claude.json`.
+pub fn usage_cache(env: &Env) -> PathBuf {
+    claude_code::user_state_file(env)
+}
+
 impl Quota {
     /// The limits in a status line input (`rate_limits.five_hour`, `.seven_day`);
     /// `None` when Claude Code sent none (API users, or before the first answer).
@@ -67,6 +81,47 @@ impl Quota {
             seven_day: window("seven_day"),
         };
         (quota.five_hour.is_some() || quota.seven_day.is_some()).then_some(quota)
+    }
+
+    /// The limits `/usage` left in the content of `.claude.json`; `None` when it never
+    /// ran, or when the format is not the expected one.
+    pub fn from_usage_cache(state: &Value) -> Option<Quota> {
+        let cache = state.get(USAGE_CACHE_KEY)?;
+        let utilization = cache.get("utilization")?;
+        let window = |name: &str| {
+            let window = utilization.get(name)?;
+            let resets_at = window.get("resets_at")?.as_str()?;
+            Some(Window {
+                used_percentage: window.get("utilization")?.as_f64()?,
+                resets_at: chrono::DateTime::parse_from_rfc3339(resets_at)
+                    .ok()?
+                    .timestamp(),
+            })
+        };
+        let quota = Quota {
+            captured_at: cache.get("fetchedAtMs")?.as_i64()? / 1000,
+            five_hour: window("five_hour"),
+            seven_day: window("seven_day"),
+        };
+        (quota.five_hour.is_some() || quota.seven_day.is_some()).then_some(quota)
+    }
+
+    /// The more recent of the status line's reading and the `/usage` cache in
+    /// `usage_cache`.
+    pub fn latest(data_dir: &Path, usage_cache: &Path) -> Option<Quota> {
+        let cached = std::fs::read_to_string(usage_cache)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|state| Quota::from_usage_cache(&state));
+        [Quota::load(data_dir), cached]
+            .into_iter()
+            .flatten()
+            .max_by_key(|quota| quota.captured_at)
+    }
+
+    /// Seen too long ago to be taken for the quota of the moment.
+    pub fn is_stale(&self, now: i64) -> bool {
+        now - self.captured_at > STALE_AFTER
     }
 
     pub fn load(data_dir: &Path) -> Option<Quota> {
@@ -182,6 +237,55 @@ mod tests {
         let quota = quota(12.0, 34.0);
         quota.save(dir.path()).unwrap();
         assert_eq!(Quota::load(dir.path()), Some(quota));
+    }
+
+    fn usage_cache(five: f64, fetched_at: i64) -> serde_json::Value {
+        json!({"cachedUsageUtilization": {
+            "fetchedAtMs": fetched_at * 1000 + 85,
+            "utilization": {
+                "five_hour": {"utilization": five, "resets_at": "2027-01-15T08:40:00.970624+00:00"},
+                "seven_day": null
+            }
+        }})
+    }
+
+    #[test]
+    fn reads_the_usage_cache() {
+        let quota = Quota::from_usage_cache(&usage_cache(19.0, NOW)).unwrap();
+        assert_eq!(quota.captured_at, NOW);
+        let five = quota.five_hour.unwrap();
+        assert_eq!(five.used_percentage, 19.0);
+        assert_eq!(five.resets_at, 1_800_002_400);
+        assert_eq!(quota.seven_day, None);
+        assert_eq!(Quota::from_usage_cache(&json!({"projects": {}})), None);
+        let changed = json!({"cachedUsageUtilization": {"fetchedAtMs": 1, "utilization": {
+            "five_hour": {"utilization": "19 %", "resets_at": "soon"}}}});
+        assert_eq!(Quota::from_usage_cache(&changed), None, "an unknown format");
+    }
+
+    #[test]
+    fn the_more_recent_reading_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join(".claude.json");
+        assert_eq!(Quota::latest(dir.path(), &cache), None);
+        quota(13.0, 0.0).save(dir.path()).unwrap();
+        std::fs::write(&cache, usage_cache(19.0, NOW + 60).to_string()).unwrap();
+        let latest = Quota::latest(dir.path(), &cache).unwrap();
+        assert_eq!(latest.five_hour.unwrap().used_percentage, 19.0);
+        std::fs::write(&cache, usage_cache(19.0, NOW - 60).to_string()).unwrap();
+        let latest = Quota::latest(dir.path(), &cache).unwrap();
+        assert_eq!(latest.five_hour.unwrap().used_percentage, 13.0);
+        std::fs::write(&cache, "{ not json").unwrap();
+        assert!(
+            Quota::latest(dir.path(), &cache).is_some(),
+            "a bad cache is ignored"
+        );
+    }
+
+    #[test]
+    fn a_reading_grows_stale() {
+        assert!(!quota(10.0, 0.0).is_stale(NOW + STALE_AFTER));
+        assert!(quota(10.0, 0.0).is_stale(NOW + STALE_AFTER + 1));
     }
 
     #[test]

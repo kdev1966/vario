@@ -4,6 +4,69 @@ All notable changes to Vario are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Kiro CLI support (the closed-source successor to Amazon Q Developer CLI): two agent
+  JSON files in `~/.kiro/cli-agents/` (`vario-reader.json` with `claude-haiku-4.5`,
+  `vario-worker.json` inheriting the session's model), delegation guidance in each
+  agent's `prompt` field, and hooks (`agentSpawn` → gauge, `userPromptSubmit` →
+  active client). Falls back to `~/.aws/amazonq/cli-agents/` when only the Amazon Q
+  CLI path exists. Detected by `kiro-cli`, `q`, `~/.kiro/` or `~/.aws/amazonq/`.
+- The gauge switches to the client you are using as soon as you submit a prompt:
+  prompt hooks for Codex, Cursor, OpenCode and VS Code (Copilot), and a response-end
+  refresh of the usage for OpenCode and Copilot. Selecting another chat without
+  sending a prompt does not switch it. Run `vario doctor --fix` (or **Repair**) to
+  add the new hooks to an existing setup.
+- CodeGeeX in VS Code takes the gauge when a new conversation is saved. Its extension
+  has no hook, so Vario reads its conversation history in VS Code's global storage,
+  read-only, without keeping any prompt or response.
+- The floating gauge opens by itself when an agent's session starts: a session-start
+  hook for Claude Code, Codex and VS Code, the OpenCode plugin when OpenCode starts,
+  and Cursor's existing hook. It stays up when the agent closes. **Open the gauge
+  with each agent**, on the Install page, turns this off. Run `vario doctor --fix`
+  (or **Repair**) to add the new hooks to an existing setup.
+- The gauge and the main window snap together when released close to each other;
+  dragging the gauge brings the docked main window along. The gauge comes back where
+  it was left, else in the top right corner of the screen.
+
+### Changed
+
+- The main window has the gauge's look: a dark, frameless panel the height of the
+  gauge, with a card of lamps per client and a channel of knobs per sub-agent.
+  Closing it leaves the gauge up; on macOS its Dock icon shows only while it is open.
+- One interface runs at a time: opening `vario-gui` or `Vario.app` again brings up
+  the running one.
+- Only Cursor still takes the delegation guidance from the session-start hook; the
+  other clients read it from their instructions file.
+
+### Fixed
+
+- In Claude Code's VS Code extension, where the status line never runs, the gauge
+  kept showing the last other client (Copilot's model) while Claude Code was in use.
+  Claude Code's prompt hook now takes the gauge back.
+- The interface no longer mixes languages when an agent starts it with another `LANG`
+  than the system's (OpenCode with `en_US`): its labels now follow the same language
+  as its values.
+- The gauge no longer shows an old quota as the current one. Claude Code's VS Code
+  extension has no status line, so the gauge also reads the quota that Claude Code
+  keeps in `.claude.json` (refreshed when a session starts and by `/usage`), and
+  shows the more recent reading. Seen more than 15 minutes ago, the quota turns grey
+  with how old it is; once its window has passed, the gauge says it expired.
+- The gauge keeps the last known quota on screen, greyed, once its window has passed,
+  instead of going blank; the thermostat still only lights from a window that is
+  current.
+- The gauge follows the client you are working in. Only Claude Code has a subscription
+  quota; when the session in use is another client, the gauge shows that client instead
+  of a stale quota. OpenCode reports its model, tokens and cost, so the gauge shows
+  them. Copilot's and Gemini CLI's hooks carry none of that, so the gauge reads the
+  model and tokens from the session's log (the Copilot agent's `events.jsonl`, Gemini
+  CLI's transcript, through a new `AfterAgent` hook); with VS Code's older built-in
+  chat, it shows the model from VS Code's local chat store. Neither reports a cost in
+  dollars, so the gauge shows none. Run
+  `vario doctor --fix` (or **Repair**) to add the reports to an existing setup.
+
 ## [0.2.1] - 2026-10-16
 
 ### Fixed

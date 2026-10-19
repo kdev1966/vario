@@ -1,6 +1,6 @@
 //! OpenAI Codex CLI: sub-agents in `<home>/agents/*.toml`, the delegation guidance
-//! in `<home>/AGENTS.md`, and a `SubagentStop` hook in `<home>/hooks.json`, for every
-//! project. `<home>` is `$CODEX_HOME`, or `~/.codex`.
+//! in `<home>/AGENTS.md`, and session, prompt-submit and sub-agent hooks in
+//! `<home>/hooks.json`, for every project. `<home>` is `$CODEX_HOME`, or `~/.codex`.
 //!
 //! Codex delegates only when asked to, or when its instructions say so: the guidance
 //! block is what makes it use Vario's sub-agents. Hooks Codex does not manage must be
@@ -86,16 +86,39 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
     parts.push(Box::new(JsonHooks {
         path: dir.join("hooks.json"),
         keys: vec!["hooks".into()],
-        entries: vec![(
-            "SubagentStop".into(),
-            json!({
-                "hooks": [{
-                    "type": "command",
-                    "command": env.hook_command("subagent-stop", "codex"),
-                    "timeout": 10,
-                }],
-            }),
-        )],
+        entries: vec![
+            (
+                "SessionStart".into(),
+                json!({
+                    "matcher": "startup|resume",
+                    "hooks": [{
+                        "type": "command",
+                        "command": env.hook_command("session-start", "codex"),
+                        "timeout": 5,
+                    }],
+                }),
+            ),
+            (
+                "SubagentStop".into(),
+                json!({
+                    "hooks": [{
+                        "type": "command",
+                        "command": env.hook_command("subagent-stop", "codex"),
+                        "timeout": 10,
+                    }],
+                }),
+            ),
+            (
+                "UserPromptSubmit".into(),
+                json!({
+                    "hooks": [{
+                        "type": "command",
+                        "command": env.hook_command("activity", "codex"),
+                        "timeout": 5,
+                    }],
+                }),
+            ),
+        ],
         defaults: Map::new(),
         kind: Kind::Hooks,
     }));

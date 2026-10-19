@@ -5,10 +5,12 @@
 pub(crate) mod claude_code;
 mod codex;
 mod cursor;
-mod gemini;
+pub(crate) mod gemini;
+mod kiro;
 mod opencode;
 pub mod subagents;
-mod vscode;
+pub mod vscode;
+pub use vscode::CodeGeeXActivity;
 
 use std::collections::HashMap;
 use std::env;
@@ -148,6 +150,7 @@ pub fn integrations() -> Vec<Integration> {
         codex::integration(),
         gemini::integration(),
         vscode::integration(),
+        kiro::integration(),
     ]
 }
 

@@ -4878,6 +4878,8 @@ dependencies = [
  "i-slint-backend-testing",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "serde",
+ "serde_json",
  "slint",
  "slint-build",
  "tempfile",
