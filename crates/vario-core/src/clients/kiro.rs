@@ -115,7 +115,10 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
     // are no-ops here.
     parts.push(Box::new(KiroHooks { dir: dir.clone() }));
     // A read-only Part that surfaces whether `vario` is the active default agent.
-    parts.push(Box::new(KiroSetDefault { dir, exe: env.exe.clone() }));
+    parts.push(Box::new(KiroSetDefault {
+        dir,
+        exe: env.exe.clone(),
+    }));
     parts
 }
 
@@ -240,10 +243,7 @@ fn render_main(env: &Env) -> String {
              vario-worker. Set as default with: kiro-cli agent set-default vario",
         ),
     );
-    agent.insert(
-        "prompt".into(),
-        Value::from(subagents::INSTRUCTIONS),
-    );
+    agent.insert("prompt".into(), Value::from(subagents::INSTRUCTIONS));
     agent.insert(
         "allowedTools".into(),
         json!(["fs_read", "fs_write", "execute_bash"]),
@@ -314,7 +314,8 @@ mod tests {
     #[test]
     fn detects_when_amazonq_dir_exists() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join(".aws").join("amazonq").join("cli-agents")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".aws").join("amazonq").join("cli-agents"))
+            .unwrap();
         let env = Env {
             home: dir.path().to_path_buf(),
             ..Env::default()
@@ -343,7 +344,10 @@ mod tests {
         let all = subagents::all();
         let worker = render(&all[1], &env);
         let value: Value = serde_json::from_str(&worker).unwrap();
-        assert!(value.get("model").is_none_or(Value::is_null), "worker inherits");
+        assert!(
+            value.get("model").is_none_or(Value::is_null),
+            "worker inherits"
+        );
         let tools = value["allowedTools"].as_array().unwrap();
         assert!(tools.iter().any(|t| t == "execute_bash"));
     }
@@ -366,7 +370,8 @@ mod tests {
     fn installs_into_kiro_dir_when_both_exist() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".kiro").join("agents")).unwrap();
-        std::fs::create_dir_all(dir.path().join(".aws").join("amazonq").join("cli-agents")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".aws").join("amazonq").join("cli-agents"))
+            .unwrap();
         let env = Env {
             home: dir.path().to_path_buf(),
             ..Env::default()

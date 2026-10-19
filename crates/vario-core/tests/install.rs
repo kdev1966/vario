@@ -906,7 +906,11 @@ fn kiro_install_then_remove() {
 
     let outcomes = install::apply(&mut session(dir.path()), &kiro, &env);
     assert!(outcomes[0].ok(), "{:?}", outcomes[0].errors);
-    assert_eq!(outcomes[0].changes.len(), 3, "vario-reader.json, vario-worker.json, vario.json");
+    assert_eq!(
+        outcomes[0].changes.len(),
+        3,
+        "vario-reader.json, vario-worker.json, vario.json"
+    );
 
     let agents = kiro_dir.clone();
     assert_eq!(
@@ -922,7 +926,9 @@ fn kiro_install_then_remove() {
     assert!(reader["prompt"].as_str().unwrap().contains("vario-reader"));
     let allowed = reader["allowedTools"].as_array().unwrap();
     assert!(!allowed.iter().any(|t| t == "execute_bash"));
-    let spawn_cmd = reader["hooks"]["agentSpawn"][0]["command"].as_str().unwrap();
+    let spawn_cmd = reader["hooks"]["agentSpawn"][0]["command"]
+        .as_str()
+        .unwrap();
     assert!(spawn_cmd.contains("session-start --via kiro"));
     let prompt_cmd = reader["hooks"]["userPromptSubmit"][0]["command"]
         .as_str()
@@ -961,7 +967,10 @@ fn kiro_install_then_remove() {
     );
 
     let again = install::apply(&mut session(dir.path()), &kiro, &env);
-    assert!(again[0].changes.is_empty(), "a second install changes nothing");
+    assert!(
+        again[0].changes.is_empty(),
+        "a second install changes nothing"
+    );
 
     let removed = install::remove(&mut session(dir.path()), &kiro, &env);
     assert!(removed[0].ok(), "{:?}", removed[0].errors);
