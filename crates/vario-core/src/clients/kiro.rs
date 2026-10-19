@@ -1,7 +1,7 @@
 //! Kiro CLI (successor to Amazon Q Developer CLI): one agent JSON file per role in
-//! `<global>/cli-agents/`, the delegation guidance in the agent's `prompt` field, and
+//! `<global>/agents/`, the delegation guidance in the agent's `prompt` field, and
 //! hooks (`agentSpawn`, `userPromptSubmit`) in the same file. `<global>` is
-//! `~/.kiro` (Kiro CLI) or `~/.aws/amazonq` (Amazon Q CLI); both are checked.
+//! `~/.kiro/agents` (Kiro CLI) or `~/.aws/amazonq/cli-agents` (Amazon Q CLI); both are checked.
 //!
 //! Kiro has no sub-agent mechanism in its released format: the reader and worker are
 //! installed as separate agents the user selects with `--agent`. The delegation
@@ -45,13 +45,11 @@ pub fn integration() -> Integration {
         },
         parts,
         handoff_connected: |env| {
-            agent_dirs(env).iter().any(|dir| {
-                has_mcp_server(
-                    &dir.join("vario-worker.json"),
-                    "mcpServers",
-                    handoff::SERVER_NAME,
-                )
-            })
+            has_mcp_server(
+                &env.home.join(".kiro").join("settings").join("mcp.json"),
+                "mcpServers",
+                handoff::SERVER_NAME,
+            )
         },
     }
 }
@@ -231,7 +229,13 @@ fn agent_list(kiro: &Path) -> Option<String> {
         .args(["agent", "list"])
         .output()
         .ok()
-        .and_then(|out| String::from_utf8(out.stdout).ok());
+        .and_then(|out| {
+            // kiro-cli writes to stderr when stdout is not a TTY.
+            let stdout = String::from_utf8(out.stdout).unwrap_or_default();
+            let stderr = String::from_utf8(out.stderr).unwrap_or_default();
+            let text = if stdout.is_empty() { stderr } else { stdout };
+            if text.is_empty() { None } else { Some(text) }
+        });
     *cached = Some((kiro.to_path_buf(), Instant::now(), out.clone()));
     out
 }
