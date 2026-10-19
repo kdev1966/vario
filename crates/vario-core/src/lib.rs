@@ -4,6 +4,7 @@
 pub mod active;
 pub mod choices;
 pub mod clients;
+pub mod dock;
 pub mod error;
 pub mod files;
 pub mod gauge;
@@ -11,8 +12,10 @@ pub mod gui;
 pub mod handoff;
 pub mod hooks;
 pub mod install;
+pub mod instance;
 pub mod lang;
 pub mod overview;
+pub mod panel;
 pub mod parts;
 pub mod paths;
 pub mod quota;

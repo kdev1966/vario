@@ -16,9 +16,9 @@ use slint::{ComponentHandle, PhysicalPosition, Timer, TimerMode};
 use vario_core::clients::Env;
 use vario_core::lang::Lang;
 
-use crate::dock::{self, Rect, Side};
-use crate::instance::{self, Want};
 use crate::{AppWindow, GaugeWindow, MainWindow, gauge};
+use vario_core::dock::{self, Rect, Side};
+use vario_core::instance::{self, Want};
 
 /// How close, in logical pixels, a released window must be to snap.
 const REACH: f32 = 24.0;

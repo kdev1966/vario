@@ -72,11 +72,11 @@ jobs:
           plutil -lint dist/Vario.app/Contents/Info.plist
 
   msrv:
-    name: minimum Rust version (1.88, core and command line)
+    name: minimum Rust version (1.89, core and command line)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
       # The interface needs Rust 1.92 (Slint 1.18); the stable jobs build it.
       - run: cargo check --all-targets -p vario-core -p vario

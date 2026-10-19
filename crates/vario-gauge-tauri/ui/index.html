@@ -6,29 +6,12 @@
 <!-- The floating gauge, drawn by the web view: the same slim channel strip as the Slint
      one (crates/vario-gui/ui/gauge.slint), same sizes and colours. Values below 0 mean
      "not known yet". -->
+<link rel="stylesheet" href="theme.css">
 <style>
-  :root {
-    --panel-top: #1e1f25; --panel-bottom: #121317; --plate: #17181d; --edge: #2d2f38;
-    --text: #e9eaef; --muted: #8a8d99; --amber: #e3a23b; --red: #e2553f;
-    --green: #47c08a; --unlit: #25262e;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  /* A floating widget: only the rounded panel shows, the window itself is clear. */
-  html, body { background: transparent; overflow: hidden; width: 156px; height: 494px;
-    font-family: -apple-system, "Segoe UI", system-ui, sans-serif; color: var(--text);
-    user-select: none; -webkit-user-select: none; cursor: default; }
-  .abs { position: absolute; }
-  #panel { left: 0; top: 0; width: 156px; height: 494px; border-radius: 14px;
-    background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
-    border: 1px solid var(--edge); }
-  .plate { border-radius: 7px; background: var(--plate); border: 1px solid var(--edge);
-    overflow: hidden; }
-  .caption { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: 0.8px; }
-  #logo { left: 12px; top: 9px; color: var(--amber); font-size: 17px; font-weight: 800;
-    font-style: italic; }
-  #close { left: 130px; top: 10px; width: 16px; height: 16px; border-radius: 8px;
-    background: #2a2b33; font-size: 11px; line-height: 16px; text-align: center; }
-  #close:hover { background: var(--red); }
+  html, body { width: 156px; height: 494px; }
+  #panel { width: 156px; height: 494px; }
+  #logo { left: 12px; top: 9px; }
+  #close { left: 130px; top: 10px; }
   #face-light { left: 3px; top: 3px; width: 126px; border-radius: 5px;
     background: radial-gradient(circle, #2c2d36 0%, #17181d 85%); }
   #needle { left: 65px; top: 24px; width: 2px; height: 80px; background: #f1f2f6;
@@ -42,15 +25,9 @@
     background: linear-gradient(180deg, #ffffff14, #ffffff00); }
   #model { left: 8px; width: 116px; text-align: center; font-weight: 700;
     overflow-wrap: anywhere; }
-  .lamp { width: 9px; height: 9px; border-radius: 50%; background: var(--unlit); }
   .row { left: 10px; width: 114px; height: 13px; font-size: 10px; color: var(--muted);
     display: flex; align-items: center; gap: 7px; }
   .row.lit { color: var(--text); font-weight: 700; }
-  .knob { width: 60px; height: 74px; }
-  .cap { left: 13px; top: 13px; width: 34px; height: 34px; border-radius: 17px;
-    background: radial-gradient(circle, #3a3c46 0%, #24252c 70%, #1b1c22 100%);
-    border: 1px solid #0d0e11; font-size: 10px; font-weight: 700; line-height: 32px;
-    text-align: center; }
   #footer { left: 12px; top: 428px; width: 132px; height: 22px; border-radius: 5px;
     background: #1b1c22; border: 1px solid var(--edge); font-size: 9px; color: var(--muted);
     display: flex; align-items: center; justify-content: center; white-space: pre;
@@ -58,13 +35,12 @@
   #footer:hover { background: #2a2b34; }
   #open { left: 0; top: 456px; width: 156px; height: 18px; text-align: center;
     color: var(--amber); font-size: 9px; font-weight: 700; }
-  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<div id="panel" class="abs"></div>
-<div id="logo" class="abs">Vario</div>
-<div id="close" class="abs click">×</div>
+<div id="panel" class="abs panel"></div>
+<div id="logo" class="abs logo">Vario</div>
+<div id="close" class="abs close click">×</div>
 
 <!-- The face: a needle meter for the 5-hour quota, or the model in use. -->
 <div id="face" class="abs plate" style="left:12px;top:36px;width:132px">
@@ -107,26 +83,13 @@
 <div id="footer" class="abs click"></div>
 <div id="open" class="abs click" data-t="open Vario ↗"></div>
 
+<script src="common.js"></script>
 <script>
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
-const { getCurrentWindow } = window.__TAURI__.window;
-
 const FR = {
   "MODEL": "MODÈLE", "tokens out": "jetons sortis", "INPUT": "ENTRÉE", "7 DAYS": "7 JOURS",
   "COST": "COÛT", "Delegate more": "Renforcé", "Alert": "Alerte", "Limit": "Limite atteinte",
   "DELEGATED": "DÉLÉGUÉ", "ESCALATED": "ESCALADES", "open Vario ↗": "ouvrir Vario ↗",
 };
-let fr = false;
-const t = (text) => (fr && FR[text]) || text;
-const $ = (id) => document.getElementById(id);
-const percent = (value) => value < 0 ? "—" : Math.round(value) + " %";
-const svg = (tag, attrs) => {
-  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
-  return node;
-};
-const rad = (deg) => deg * Math.PI / 180;
 
 // The needle meter's geometry: the pivot sits below the face, like a VU meter.
 const CX = 66, CY = 104, R = 76, START = -50, SWEEP = 100;
@@ -177,31 +140,6 @@ function drawThermostat() {
     row.innerHTML = `<span class="lamp"></span><span>${t(label)}</span>`;
     $("thermostat").append(row);
   });
-}
-
-// A small knob: an amber arc over 270 degrees, the value inside, the caption below.
-function knob(left, caption) {
-  const node = document.createElement("div");
-  node.className = "abs knob";
-  node.style.cssText = `left:${left}px;top:344px`;
-  node.innerHTML = `<svg class="abs" width="60" height="60" viewBox="0 0 60 60">
-      <path d="${arc(-135, 135)}" stroke="var(--unlit)" stroke-width="4" fill="none"/>
-      <path class="value" stroke="var(--amber)" stroke-width="4" fill="none"/></svg>
-    <div class="abs cap"></div>
-    <div class="abs caption" style="left:0;top:62px;width:60px;text-align:center">${t(caption)}</div>`;
-  $("knobs").append(node);
-  return node;
-}
-function arc(from, to) {
-  const r = 22, p = (deg) => [30 + r * Math.sin(rad(deg)), 30 - r * Math.cos(rad(deg))];
-  const [x0, y0] = p(from), [x1, y1] = p(to);
-  return `M${x0} ${y0} A${r} ${r} 0 ${to - from > 180 ? 1 : 0} 1 ${x1} ${y1}`;
-}
-function setKnob(node, value) {
-  const path = node.querySelector(".value");
-  const share = Math.min(Math.max(value, 0), 100) / 100;
-  path.setAttribute("d", value > 0.5 ? arc(-135, -135 + 270 * share) : "");
-  node.querySelector(".cap").textContent = percent(value);
 }
 
 let knobs;
@@ -263,20 +201,15 @@ function show(r) {
 }
 
 async function start() {
-  fr = (await invoke("ui_lang")) === "fr";
-  for (const node of document.querySelectorAll("[data-t]")) node.textContent = t(node.dataset.t);
+  await translate(FR);
   drawScale();
   drawSegments();
   drawThermostat();
-  knobs = [knob(14, "DELEGATED"), knob(82, "ESCALATED")];
+  knobs = [knob($("knobs"), 14, 344, t("DELEGATED")), knob($("knobs"), 82, 344, t("ESCALATED"))];
   show(await invoke("reading"));
   await listen("reading", (event) => show(event.payload));
 }
 
-// The gauge is dragged from anywhere but its buttons.
-document.addEventListener("mousedown", (event) => {
-  if (event.button === 0 && !event.target.closest(".click")) getCurrentWindow().startDragging();
-});
 $("close").addEventListener("click", () => invoke("close_gauge"));
 for (const id of ["footer", "open"]) $(id).addEventListener("click", () => invoke("open_main"));
 

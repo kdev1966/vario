@@ -1,30 +1,49 @@
-//! Prototype: Vario's floating gauge drawn by Tauri (the system's web view) instead of
-//! Slint, to compare the two before choosing. The readings come from the same code,
-//! `vario_core::gauge`; only the window and its drawing differ.
+//! Prototype: Vario's interface drawn by Tauri (the system's web view) instead of Slint,
+//! to compare the two before choosing. The floating gauge and the main window show the
+//! same things from the same code (`vario_core::gauge`, `vario_core::panel`); only the
+//! windows and their drawing differ.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod shell;
+
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State};
 use vario_core::clients::{CodeGeeXActivity, Env};
 use vario_core::gauge::Reading;
+use vario_core::install;
+use vario_core::instance::{self, Want};
 use vario_core::lang::Lang;
+use vario_core::panel::{Choice, Panel, Plan, Report, Status};
 use vario_core::{paths, quota, usage};
 
 /// The quota is re-read this often; it changes after each answer.
 const QUOTA_EVERY: Duration = Duration::from_secs(5);
 /// The logs are measured this often.
 const USAGE_EVERY: Duration = Duration::from_secs(60);
-/// The gauge's margin from the screen's corner, in logical pixels.
-const MARGIN: f64 = 24.0;
+/// How often requests from later runs are read.
+const POLL: Duration = Duration::from_millis(300);
 
+/// The commands that detect the clients or write files are `async`: Tauri then runs
+/// them off the main thread, which would otherwise freeze both windows meanwhile
+/// (detecting the clients takes seconds).
 struct Ctx {
     env: Env,
     data_dir: PathBuf,
     lang: Lang,
+    panel: Mutex<Panel>,
+}
+
+impl Ctx {
+    fn panel(&self) -> std::sync::MutexGuard<'_, Panel> {
+        self.panel
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 /// The language of the labels: the same as the values' (`LANG` first, else the system).
@@ -36,7 +55,28 @@ fn ui_lang(ctx: State<Ctx>) -> &'static str {
     }
 }
 
-/// The reading of the moment, for the first drawing; the next ones come as events.
+/// A page's error, on the program's output.
+#[tauri::command]
+fn js_error(page: String, message: String) {
+    eprintln!("vario-gauge-tauri: {page}: {message}");
+}
+
+#[tauri::command]
+fn version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// The page the main window opens on: `VARIO_GUI_TAB=0..3`, for screenshots.
+#[tauri::command]
+fn first_page() -> u8 {
+    std::env::var("VARIO_GUI_TAB")
+        .ok()
+        .and_then(|tab| tab.parse().ok())
+        .filter(|tab| *tab < 4)
+        .unwrap_or(0)
+}
+
+/// The reading of the moment, for the gauge's first drawing; the next ones are events.
 #[tauri::command]
 fn reading(ctx: State<Ctx>) -> Reading {
     Reading::read(
@@ -48,61 +88,175 @@ fn reading(ctx: State<Ctx>) -> Reading {
     )
 }
 
-/// The main window stays the Slint one in this prototype.
 #[tauri::command]
-fn open_main() {
-    let _ = std::process::Command::new("vario-gui").spawn();
+async fn status(ctx: State<'_, Ctx>) -> Result<Status, String> {
+    Ok(ctx.panel().status())
+}
+
+#[tauri::command]
+async fn choices(ctx: State<'_, Ctx>) -> Result<Vec<Choice>, String> {
+    Ok(ctx.panel().choices())
+}
+
+#[tauri::command]
+async fn report(ctx: State<'_, Ctx>) -> Result<Report, String> {
+    Ok(ctx.panel().report())
+}
+
+/// Every detected client ticked again, as when the mode changes.
+#[tauri::command]
+async fn reset_candidates(ctx: State<'_, Ctx>) -> Result<Vec<Choice>, String> {
+    Ok({
+        let mut panel = ctx.panel();
+        panel.reset_candidates();
+        panel.choices()
+    })
+}
+
+#[tauri::command]
+async fn toggle(ctx: State<'_, Ctx>, index: usize, checked: bool) -> Result<Vec<Choice>, String> {
+    Ok({
+        let mut panel = ctx.panel();
+        panel.toggle(index, checked);
+        panel.choices()
+    })
+}
+
+#[tauri::command]
+fn set_gauge_with_sessions(ctx: State<Ctx>, on: bool) {
+    ctx.panel().set_gauge_with_sessions(on);
+}
+
+#[tauri::command]
+async fn preview(ctx: State<'_, Ctx>) -> Result<Plan, String> {
+    Ok(ctx.panel().preview())
+}
+
+#[tauri::command]
+async fn apply(ctx: State<'_, Ctx>) -> Result<String, String> {
+    Ok(ctx.panel().apply())
+}
+
+#[tauri::command]
+async fn repair(ctx: State<'_, Ctx>) -> Result<Option<String>, String> {
+    Ok(ctx.panel().repair())
+}
+
+#[tauri::command]
+async fn remove_all(ctx: State<'_, Ctx>) -> Result<String, String> {
+    Ok(ctx.panel().remove_all())
+}
+
+#[tauri::command]
+fn open_gauge(app: AppHandle) {
+    shell::show(&app, Want::Gauge);
+}
+
+#[tauri::command]
+fn open_main(app: AppHandle) {
+    shell::show(&app, Want::Main);
 }
 
 #[tauri::command]
 fn close_gauge(app: AppHandle) {
-    app.exit(0);
+    shell::close(&app, shell::GAUGE);
+}
+
+#[tauri::command]
+fn close_main(app: AppHandle) {
+    shell::close(&app, shell::MAIN);
 }
 
 fn main() {
-    let env = Env::current();
+    let mut env = Env::current();
+    env.exe = command_line_path(&env);
     let lang = Lang::detect(&env);
+    let want = if std::env::args().skip(1).any(|arg| arg == "--gauge") {
+        Want::Gauge
+    } else {
+        Want::Main
+    };
+    let data_dir = paths::data_dir();
+    // Its own lock while it is a prototype: the Slint interface may be running too.
+    let lock_dir = data_dir.join("tauri");
+    let _ = std::fs::create_dir_all(&lock_dir);
+    let Some(_instance) = instance::claim(&lock_dir) else {
+        instance::request(&lock_dir, want);
+        return;
+    };
     let ctx = Ctx {
+        panel: Mutex::new(Panel::new(env.clone(), data_dir.clone(), lang)),
         env,
-        data_dir: paths::data_dir(),
+        data_dir,
         lang,
     };
     tauri::Builder::default()
         .manage(ctx)
-        .invoke_handler(tauri::generate_handler![ui_lang, reading, open_main, close_gauge])
-        .setup(|app| {
-            // A desktop widget: no Dock icon and no place in the app switcher.
+        .manage(shell::Shell::default())
+        .invoke_handler(tauri::generate_handler![
+            js_error,
+            ui_lang,
+            version,
+            first_page,
+            reading,
+            status,
+            choices,
+            report,
+            reset_candidates,
+            toggle,
+            set_gauge_with_sessions,
+            preview,
+            apply,
+            repair,
+            remove_all,
+            open_gauge,
+            open_main,
+            close_gauge,
+            close_main,
+        ])
+        .on_window_event(shell::on_window_event)
+        .setup(move |app| {
+            // A desktop widget: no Dock icon until the main window opens.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            let gauge = app
-                .get_webview_window("gauge")
-                .ok_or("the gauge window is missing from tauri.conf.json")?;
-            place(&gauge);
-            #[cfg(target_os = "macos")]
-            {
-                macos::join_every_space(&gauge);
-                macos::set_on_screen(&gauge, true);
-            }
-            #[cfg(not(target_os = "macos"))]
-            gauge.show()?;
-            feed(app.handle().clone());
-            follow_agent_apps(app.handle().clone());
+            let handle = app.handle().clone();
+            shell::show(&handle, want);
+            feed(handle.clone());
+            shell::follow_agent_apps(handle.clone());
+            listen(handle, lock_dir);
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("the gauge could not start");
+        .expect("Vario's interface could not start");
 }
 
-/// In the screen's top right corner.
-fn place(gauge: &WebviewWindow) {
-    let (Ok(Some(monitor)), Ok(size)) = (gauge.current_monitor(), gauge.outer_size()) else {
-        return;
-    };
-    let margin = (MARGIN * monitor.scale_factor()) as i32;
-    let area = monitor.work_area();
-    let x = area.position.x + area.size.width as i32 - size.width as i32 - margin;
-    let y = area.position.y + margin;
-    let _ = gauge.set_position(PhysicalPosition::new(x, y));
+/// Hooks must run the `vario` command, not this interface: the one the installed hooks
+/// already run, so the interface and the command line agree; else the one installed
+/// next to the interface; else the one on `PATH`; else plain `vario`.
+fn command_line_path(env: &Env) -> PathBuf {
+    let name = if cfg!(windows) { "vario.exe" } else { "vario" };
+    install::hook_program(env)
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+                .filter(|path| path.is_file())
+        })
+        .or_else(|| env.which("vario"))
+        .unwrap_or_default()
+}
+
+/// Answer the requests of the runs started after this one.
+fn listen(app: AppHandle, lock_dir: PathBuf) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(POLL);
+            for want in instance::take_requests(&lock_dir) {
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || shell::show(&handle, want));
+            }
+        }
+    });
 }
 
 /// Keep the gauge up to date from a background thread, until the application ends.
@@ -127,92 +281,8 @@ fn feed(app: AppHandle) {
                 codegeex_activity.read(),
                 quota::now(),
             );
-            let _ = app.emit("reading", reading);
+            let _ = app.emit_to(shell::GAUGE, "reading", reading);
             thread::sleep(QUOTA_EVERY);
         }
     });
-}
-
-/// Show the gauge over the agents' applications only. macOS only; elsewhere the gauge
-/// stays above every window.
-fn follow_agent_apps(app: AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        use std::sync::{Arc, Mutex};
-        use vario_core::gauge::{FOLLOW_EVERY, Follow};
-        let follow = Arc::new(Mutex::new(Follow::default()));
-        thread::spawn(move || {
-            loop {
-                thread::sleep(FOLLOW_EVERY);
-                let follow = Arc::clone(&follow);
-                let handle = app.clone();
-                // AppKit wants its windows and the workspace on the main thread.
-                let _ = app.run_on_main_thread(move || {
-                    let (Some(gauge), Some(front)) =
-                        (handle.get_webview_window("gauge"), macos::front())
-                    else {
-                        return;
-                    };
-                    let shown = follow.lock().map(|mut follow| follow.step(&front));
-                    if let Ok(Some(shown)) = shown {
-                        macos::set_on_screen(&gauge, shown);
-                    }
-                });
-            }
-        });
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = app;
-}
-
-#[cfg(target_os = "macos")]
-#[allow(unsafe_code)] // one pointer cast, see below; the crate otherwise denies unsafe
-mod macos {
-    use objc2_app_kit::{NSRunningApplication, NSWindow, NSWindowCollectionBehavior, NSWorkspace};
-    use tauri::WebviewWindow;
-    use vario_core::gauge::Front;
-
-    /// Shown on every Space and over full-screen apps, like the Slint gauge.
-    pub fn join_every_space(gauge: &WebviewWindow) {
-        with_ns_window(gauge, |window| {
-            window.setCollectionBehavior(
-                NSWindowCollectionBehavior::CanJoinAllSpaces
-                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
-            );
-        });
-    }
-
-    /// On screen or away, without taking the focus from the agent's application: Tauri's
-    /// own `show` makes the window key.
-    pub fn set_on_screen(gauge: &WebviewWindow, shown: bool) {
-        with_ns_window(gauge, |window| {
-            if shown {
-                window.orderFrontRegardless();
-            } else {
-                window.orderOut(None);
-            }
-        });
-    }
-
-    /// The application in front, from the main thread.
-    pub fn front() -> Option<Front> {
-        let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
-        let pid = app.processIdentifier();
-        if pid == NSRunningApplication::currentApplication().processIdentifier() {
-            return Some(Front::Vario);
-        }
-        let bundle = app.bundleIdentifier().map(|b| b.to_string());
-        Some(Front::App { pid, bundle })
-    }
-
-    fn with_ns_window(gauge: &WebviewWindow, job: impl FnOnce(&NSWindow)) {
-        let Ok(pointer) = gauge.ns_window() else {
-            return;
-        };
-        // SAFETY: Tauri hands out the NSWindow of a window it owns and keeps alive while
-        // `gauge` is borrowed; callers run on the main thread.
-        if let Some(window) = unsafe { pointer.cast::<NSWindow>().as_ref() } {
-            job(window);
-        }
-    }
 }

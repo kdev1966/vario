@@ -61,7 +61,7 @@ It opens by itself when an agent's session starts, in every client whose hooks V
   ```
 - **Application on Linux and Windows**: the same way with `vario-gui-installer.sh` or `vario-gui-installer.ps1`.
 
-**From source** (Rust 1.88 or later for the command, 1.92 for the application):
+**From source** (Rust 1.89 or later for the command, 1.92 for the application):
 
 ```sh
 cargo install --git https://github.com/kdev1966/vario vario

@@ -1,0 +1,40 @@
+/* The dark front panel shared by the gauge and the main window (theme.slint's twin). */
+:root {
+  --panel-top: #1e1f25; --panel-bottom: #121317; --plate: #17181d; --edge: #2d2f38;
+  --text: #e9eaef; --muted: #8a8d99; --amber: #e3a23b; --red: #e2553f;
+  --green: #47c08a; --unlit: #25262e; --unlit-text: #474956; --key: #23242b;
+  --key-hover: #2c2d36;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+/* A floating widget: only the rounded panel shows, the window itself is clear. */
+html, body { background: transparent; overflow: hidden;
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif; color: var(--text);
+  user-select: none; -webkit-user-select: none; cursor: default; }
+.abs { position: absolute; }
+[hidden] { display: none !important; }
+.panel { left: 0; top: 0; border-radius: 14px; border: 1px solid var(--edge);
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom)); }
+.plate { border-radius: 7px; background: var(--plate); border: 1px solid var(--edge);
+  overflow: hidden; }
+.caption { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: 0.8px; }
+.logo { color: var(--amber); font-size: 17px; font-weight: 800; font-style: italic; }
+.close { width: 16px; height: 16px; border-radius: 8px; background: #2a2b33;
+  font-size: 11px; line-height: 16px; text-align: center; }
+.close:hover { background: var(--red); }
+.lamp { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--unlit); flex: none; }
+/* A hardware key: a dark button with an engraved label; the key that goes forward
+   has an amber label and edge. */
+.key { height: 26px; padding: 0 12px; border-radius: 5px; background: var(--key);
+  border: 1px solid var(--edge); color: var(--text); font: 600 11px/24px inherit;
+  font-family: inherit; white-space: nowrap; cursor: pointer; }
+.key:hover { background: var(--key-hover); }
+.key:active { background: var(--plate); }
+.key.primary { color: var(--amber); border-color: var(--amber); }
+.key:disabled { background: var(--plate); color: var(--unlit-text); border-color: var(--edge);
+  cursor: default; }
+.knob { width: 60px; height: 74px; }
+.knob .cap { left: 13px; top: 13px; width: 34px; height: 34px; border-radius: 17px;
+  background: radial-gradient(circle, #3a3c46 0%, #24252c 70%, #1b1c22 100%);
+  border: 1px solid #0d0e11; font-size: 10px; font-weight: 700; line-height: 32px;
+  text-align: center; }

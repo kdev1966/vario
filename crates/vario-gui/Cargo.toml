@@ -3,7 +3,7 @@ name = "vario-gui"
 description = "Vario's graphical interface: install, check and follow the delegations without a terminal."
 version.workspace = true
 edition.workspace = true
-# Slint 1.18 needs Rust 1.92; the core and the command line keep the workspace's 1.88.
+# Slint 1.18 needs Rust 1.92; the core and the command line keep the workspace's 1.89.
 rust-version = "1.92"
 license.workspace = true
 repository.workspace = true

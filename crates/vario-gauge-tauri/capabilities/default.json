@@ -1,6 +1,12 @@
 {
   "identifier": "default",
-  "description": "The gauge: its readings, and dragging it by its panel.",
-  "windows": ["gauge"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "description": "The gauge and the main window: their commands, and dragging them by their panel.",
+  "windows": [
+    "gauge",
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging"
+  ]
 }

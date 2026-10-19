@@ -1,11 +1,14 @@
 [workspace]
 members = ["crates/vario", "crates/vario-core", "crates/vario-gauge-tauri", "crates/vario-gui"]
+# The Tauri prototype builds only on request (`-p vario-gauge-tauri`): on Linux it needs
+# WebKitGTK, which the CI does not install.
+default-members = ["crates/vario", "crates/vario-core", "crates/vario-gui"]
 resolver = "3"
 
 [workspace.package]
 version = "0.2.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/kdev1966/vario"
 readme = "README.md"

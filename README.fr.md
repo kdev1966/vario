@@ -61,7 +61,7 @@ Elle s'ouvre d'elle-même au début de la session d'un agent, dans chaque client
   ```
 - **Application sous Linux et Windows** : de la même façon, avec `vario-gui-installer.sh` ou `vario-gui-installer.ps1`.
 
-**À partir des sources** (Rust 1.88 ou plus pour la commande, 1.92 pour l'application) :
+**À partir des sources** (Rust 1.89 ou plus pour la commande, 1.92 pour l'application) :
 
 ```sh
 cargo install --git https://github.com/kdev1966/vario vario
