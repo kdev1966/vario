@@ -56,6 +56,8 @@ pub struct Shell {
     last_moved: Cell<Option<Which>>,
     settle: Timer,
     poll: Timer,
+    /// Shows the gauge over the agents' applications only.
+    follow: Timer,
 }
 
 impl Shell {
@@ -74,6 +76,7 @@ impl Shell {
             last_moved: Cell::new(None),
             settle: Timer::default(),
             poll: Timer::default(),
+            follow: Timer::default(),
         })
     }
 
@@ -130,6 +133,7 @@ impl Shell {
                 }
             });
             self.watch(gauge.window(), Which::Gauge);
+            gauge::follow_agent_apps(&gauge, &self.follow);
             *self.gauge.borrow_mut() = Some(gauge);
         }
         let Some(gauge) = self.gauge_window() else {

@@ -283,8 +283,91 @@ pub fn float(gauge: &GaugeWindow) {
             window.set_skip_taskbar(true);
         }
         #[cfg(target_os = "macos")]
-        macos::join_every_space(window);
+        {
+            macos::join_every_space(window);
+            // Back on screen if following the agent's application had put it away.
+            macos::set_on_screen(window, true);
+        }
     });
+}
+
+/// The applications that run an agent: the gauge shows over them and goes away behind
+/// the others. VS Code (and Insiders), Cursor, and the terminals for the agents' CLIs.
+const AGENT_APPS: &[&str] = &[
+    "com.microsoft.VSCode",
+    "com.microsoft.VSCodeInsiders",
+    "com.todesktop.230313mzl4w4u92",
+    "com.apple.Terminal",
+    "com.googlecode.iterm2",
+    "org.tabby",
+    "dev.warp.Warp-Stable",
+    "com.mitchellh.ghostty",
+];
+
+/// How often the application in front is checked.
+pub const FOLLOW_EVERY: Duration = Duration::from_millis(400);
+
+/// The application in front, as the gauge sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Front {
+    /// Vario itself: the gauge or the main window was clicked.
+    Vario,
+    /// Another application, by its process and bundle identifier.
+    App { pid: i32, bundle: Option<String> },
+}
+
+/// Whether the gauge is on screen follows the application in front: it shows when an
+/// agent's application comes forward and goes away when another one does. Only a change
+/// of application counts, so a gauge opened by hand over another application stays up.
+#[derive(Debug, Default)]
+pub struct Follow {
+    last: Option<i32>,
+    /// Checks seen in a row on an application without an agent, since it came forward.
+    away: u32,
+}
+
+impl Follow {
+    /// The gauge's new state for the application now in front, if it changes.
+    pub fn step(&mut self, front: &Front) -> Option<bool> {
+        let Front::App { pid, bundle } = front else {
+            return None;
+        };
+        let agent = bundle.as_deref().is_some_and(|b| AGENT_APPS.contains(&b));
+        if self.last != Some(*pid) {
+            self.last = Some(*pid);
+            self.away = u32::from(!agent);
+            return agent.then_some(true);
+        }
+        // Away for a second check in a row: not just passing through on the way back.
+        if self.away == 1 {
+            self.away = 2;
+            return Some(false);
+        }
+        None
+    }
+}
+
+/// Show the gauge over the agents' applications only, from now on. macOS only; elsewhere
+/// the gauge stays above every window.
+pub fn follow_agent_apps(gauge: &GaugeWindow, timer: &slint::Timer) {
+    #[cfg(target_os = "macos")]
+    {
+        use slint::winit_030::WinitWindowAccessor;
+        let weak = gauge.as_weak();
+        let mut follow = Follow::default();
+        timer.start(slint::TimerMode::Repeated, FOLLOW_EVERY, move || {
+            let (Some(gauge), Some(front)) = (weak.upgrade(), macos::front()) else {
+                return;
+            };
+            if let Some(shown) = follow.step(&front) {
+                gauge
+                    .window()
+                    .with_winit_window(|window| macos::set_on_screen(window, shown));
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (gauge, timer);
 }
 
 /// On macOS, show the Dock icon (and a place in the app switcher) while the main
@@ -327,8 +410,10 @@ pub fn select_widget_backend() -> Result<(), slint::PlatformError> {
 #[allow(unsafe_code)] // one pointer cast, see below; the crate otherwise denies unsafe
 mod macos {
     use objc2::MainThreadMarker;
+    use objc2::rc::Retained;
     use objc2_app_kit::{
-        NSApplication, NSApplicationActivationPolicy, NSView, NSWindowCollectionBehavior,
+        NSApplication, NSApplicationActivationPolicy, NSRunningApplication, NSView, NSWindow,
+        NSWindowCollectionBehavior, NSWorkspace,
     };
     use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use slint::winit_030::winit::window::Window;
@@ -355,27 +440,91 @@ mod macos {
 
     /// NSWindow.collectionBehavior: shown on every Space and over full-screen apps.
     pub fn join_every_space(window: &Window) {
-        let Ok(handle) = window.window_handle() else {
-            return;
-        };
-        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-            return;
-        };
-        // SAFETY: winit hands out the NSView of a window it owns, alive for as long as
-        // `window` is borrowed, and this runs on the event loop's (main) thread.
-        let view: &NSView = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
-        if let Some(ns_window) = view.window() {
+        if let Some(ns_window) = ns_window(window) {
             ns_window.setCollectionBehavior(
                 NSWindowCollectionBehavior::CanJoinAllSpaces
                     | NSWindowCollectionBehavior::FullScreenAuxiliary,
             );
         }
     }
+
+    /// Put the window on screen or away, without closing it: Slint would end the event
+    /// loop with its last window hidden.
+    pub fn set_on_screen(window: &Window, shown: bool) {
+        if let Some(ns_window) = ns_window(window) {
+            if shown {
+                ns_window.orderFrontRegardless();
+            } else {
+                ns_window.orderOut(None);
+            }
+        }
+    }
+
+    /// The application in front, from the event loop's (main) thread.
+    pub fn front() -> Option<super::Front> {
+        let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+        let pid = app.processIdentifier();
+        if pid == NSRunningApplication::currentApplication().processIdentifier() {
+            return Some(super::Front::Vario);
+        }
+        let bundle = app.bundleIdentifier().map(|b| b.to_string());
+        Some(super::Front::App { pid, bundle })
+    }
+
+    fn ns_window(window: &Window) -> Option<Retained<NSWindow>> {
+        let Ok(handle) = window.window_handle() else {
+            return None;
+        };
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return None;
+        };
+        // SAFETY: winit hands out the NSView of a window it owns, alive for as long as
+        // `window` is borrowed, and this runs on the event loop's (main) thread.
+        let view: &NSView = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+        view.window()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn app(pid: i32, bundle: &str) -> Front {
+        Front::App {
+            pid,
+            bundle: Some(bundle.to_owned()),
+        }
+    }
+
+    #[test]
+    fn the_gauge_follows_the_agents_application() {
+        let mut follow = Follow::default();
+        assert_eq!(follow.step(&app(1, "com.microsoft.VSCode")), Some(true));
+        assert_eq!(follow.step(&app(1, "com.microsoft.VSCode")), None);
+        // The browser comes forward: the gauge goes away on the second check.
+        assert_eq!(follow.step(&app(2, "com.google.Chrome")), None);
+        assert_eq!(follow.step(&app(2, "com.google.Chrome")), Some(false));
+        assert_eq!(follow.step(&app(2, "com.google.Chrome")), None);
+        assert_eq!(follow.step(&app(3, "org.tabby")), Some(true));
+    }
+
+    #[test]
+    fn passing_through_another_application_keeps_the_gauge() {
+        let mut follow = Follow::default();
+        follow.step(&app(1, "com.googlecode.iterm2"));
+        assert_eq!(follow.step(&app(2, "com.apple.finder")), None);
+        assert_eq!(follow.step(&app(1, "com.googlecode.iterm2")), Some(true));
+    }
+
+    #[test]
+    fn clicking_vario_or_opening_it_over_another_application_keeps_the_gauge() {
+        let mut follow = Follow::default();
+        // Opened by hand over the Finder: no change of application yet.
+        assert_eq!(follow.step(&app(2, "com.apple.finder")), None);
+        follow.step(&app(1, "com.apple.Terminal"));
+        assert_eq!(follow.step(&Front::Vario), None);
+        assert_eq!(follow.step(&Front::Vario), None);
+    }
 
     #[test]
     fn the_window_shows_a_reading() {
