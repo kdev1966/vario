@@ -117,7 +117,7 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
     // A read-only Part that surfaces whether `vario` is the active default agent.
     parts.push(Box::new(KiroSetDefault {
         dir,
-        exe: env.exe.clone(),
+        kiro: kiro_program(env),
     }));
     parts
 }
@@ -164,7 +164,8 @@ impl Part for KiroHooks {
 /// `kiro-cli agent set-default vario` (shown in the install summary).
 struct KiroSetDefault {
     dir: PathBuf,
-    exe: PathBuf,
+    /// The `kiro-cli` (or `q`) that can confirm the default, if one is installed.
+    kiro: Option<PathBuf>,
 }
 
 impl Part for KiroSetDefault {
@@ -194,19 +195,11 @@ impl Part for KiroSetDefault {
             return false;
         }
         // If kiro-cli is available, confirm it reports vario as the default.
-        let kiro = self
-            .exe
-            .parent()
-            .and_then(|p| {
-                let k = p.join("kiro-cli");
-                k.is_file().then_some(k)
-            })
-            .or_else(which_kiro);
-        let Some(kiro) = kiro else {
+        let Some(kiro) = &self.kiro else {
             // kiro-cli not found on PATH: trust the JSON marker alone.
             return true;
         };
-        std::process::Command::new(&kiro)
+        std::process::Command::new(kiro)
             .args(["agent", "list"])
             .output()
             .ok()
@@ -215,18 +208,14 @@ impl Part for KiroSetDefault {
     }
 }
 
-fn which_kiro() -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path).find_map(|dir| {
-            for name in ["kiro-cli", "q"] {
-                let candidate = dir.join(name);
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-            None
-        })
-    })
+/// The `kiro-cli` next to `vario`, else `kiro-cli` or `q` on the `PATH` that `env` gives.
+fn kiro_program(env: &Env) -> Option<PathBuf> {
+    env.exe
+        .parent()
+        .map(|dir| dir.join("kiro-cli"))
+        .filter(|path| path.is_file())
+        .or_else(|| env.which("kiro-cli"))
+        .or_else(|| env.which("q"))
 }
 
 /// Renders the main `vario.json` agent: all tools, hooks, delegation guidance,

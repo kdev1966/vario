@@ -892,6 +892,37 @@ fn vscode_install_then_remove() {
     assert!(!copilot.join("hooks/vario.json").exists());
 }
 
+/// With kiro-cli on the PATH, the default agent is the one it reports, not the marker.
+#[cfg(unix)]
+#[test]
+fn kiro_cli_confirms_the_default_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let kiro = vec![by_name("kiro").unwrap()];
+    let instructions = |listed: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = fake_env(dir.path());
+        fs::create_dir_all(env.home.join(".kiro").join("agents")).unwrap();
+        let bin = dir.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let cli = bin.join("kiro-cli");
+        fs::write(&cli, format!("#!/bin/sh\nprintf '{listed}\\n'\n")).unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+        env.vars.insert("PATH".into(), OsString::from(&bin));
+        let outcomes = install::apply(&mut session(dir.path()), &kiro, &env);
+        assert!(outcomes[0].ok(), "{:?}", outcomes[0].errors);
+        install::status(&kiro[0], &env)
+            .into_iter()
+            .find(|(kind, _)| *kind == Kind::Instructions)
+            .map(|(_, present)| present)
+    };
+    assert_eq!(instructions("* vario"), Some(true));
+    assert_eq!(
+        instructions("  vario"),
+        Some(false),
+        "another agent is the default"
+    );
+}
+
 #[test]
 fn kiro_install_then_remove() {
     let dir = tempfile::tempdir().unwrap();
@@ -956,13 +987,14 @@ fn kiro_install_then_remove() {
     assert!(spawn_cmd.contains("session-start --via kiro"));
     assert!(main["prompt"].as_str().unwrap().contains("vario-reader"));
 
-    // KiroSetDefault is Kind::Instructions; without kiro-cli on PATH it is false.
+    // KiroSetDefault is Kind::Instructions; without kiro-cli on the PATH, the marker
+    // Vario wrote in vario.json is trusted.
     assert_eq!(
         install::status(&kiro[0], &env),
         [
             (Kind::Subagents, true),
             (Kind::Hooks, true),
-            (Kind::Instructions, false)
+            (Kind::Instructions, true)
         ]
     );
 

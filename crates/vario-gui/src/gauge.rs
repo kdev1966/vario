@@ -293,6 +293,7 @@ pub fn float(gauge: &GaugeWindow) {
 
 /// The applications that run an agent: the gauge shows over them and goes away behind
 /// the others. VS Code (and Insiders), Cursor, and the terminals for the agents' CLIs.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
 const AGENT_APPS: &[&str] = &[
     "com.microsoft.VSCode",
     "com.microsoft.VSCodeInsiders",
@@ -305,9 +306,11 @@ const AGENT_APPS: &[&str] = &[
 ];
 
 /// How often the application in front is checked.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
 pub const FOLLOW_EVERY: Duration = Duration::from_millis(400);
 
 /// The application in front, as the gauge sees it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Front {
     /// Vario itself: the gauge or the main window was clicked.
@@ -319,6 +322,7 @@ pub enum Front {
 /// Whether the gauge is on screen follows the application in front: it shows when an
 /// agent's application comes forward and goes away when another one does. Only a change
 /// of application counts, so a gauge opened by hand over another application stays up.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
 #[derive(Debug, Default)]
 pub struct Follow {
     last: Option<i32>,
@@ -326,6 +330,7 @@ pub struct Follow {
     away: u32,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
 impl Follow {
     /// The gauge's new state for the application now in front, if it changes.
     pub fn step(&mut self, front: &Front) -> Option<bool> {
