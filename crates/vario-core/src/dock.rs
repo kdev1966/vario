@@ -1,5 +1,13 @@
 //! The magnetism between the gauge and the main window, as plain geometry in physical
-//! pixels: where one window goes beside the other, and when a released window snaps.
+//! pixels: where one window goes beside the other, and when a released window snaps;
+//! and where the gauge was left, for next time.
+
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+/// Where the gauge was left, in physical pixels.
+const PLACES: &str = "gui.json";
 
 /// A window's outer rectangle on the desktop.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -85,6 +93,27 @@ pub fn corner(screen: Rect, gauge_width: i32, margin: i32) -> (i32, i32) {
     (screen.right() - gauge_width - margin, screen.y + margin)
 }
 
+#[derive(Default, Serialize, Deserialize)]
+struct Places {
+    gauge: Option<(i32, i32)>,
+}
+
+/// Where the gauge was left last time, if anywhere.
+pub fn load_place(data_dir: &Path) -> Option<(i32, i32)> {
+    let text = std::fs::read_to_string(data_dir.join(PLACES)).ok()?;
+    serde_json::from_str::<Places>(&text).ok()?.gauge
+}
+
+/// Remember where the gauge was left; written only when it moved.
+pub fn save_place(data_dir: &Path, at: (i32, i32)) {
+    if load_place(data_dir) == Some(at) {
+        return;
+    }
+    let json = serde_json::to_string(&Places { gauge: Some(at) }).expect("places serialize");
+    let _ = std::fs::create_dir_all(data_dir);
+    let _ = std::fs::write(data_dir.join(PLACES), json + "\n");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +169,15 @@ mod tests {
         assert_eq!(roomy_side(left, Some(screen)), Side::Right);
         assert_eq!(corner(screen, 156, 24), (1740, 24));
         assert!(screen.contains(1740, 24) && !screen.contains(1920, 24));
+    }
+
+    #[test]
+    fn the_gauge_place_is_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load_place(dir.path()), None);
+        save_place(dir.path(), (1740, 48));
+        assert_eq!(load_place(dir.path()), Some((1740, 48)));
+        std::fs::write(dir.path().join(PLACES), "not json").unwrap();
+        assert_eq!(load_place(dir.path()), None);
     }
 }

@@ -26,8 +26,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libx11-xcb-dev libxcursor-dev libwayland-dev libdbus-1-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: shellcheck scripts/*.sh
@@ -47,8 +46,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libx11-xcb-dev libxcursor-dev libwayland-dev libdbus-1-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev
       - run: cargo test --all-targets --no-fail-fast
       - name: Smoke test the command
         run: |
@@ -68,6 +66,8 @@ jobs:
         run: |
           test -x dist/Vario.app/Contents/MacOS/vario-gui
           test -x dist/Vario.app/Contents/MacOS/vario
+          test -f dist/Vario.app/Contents/Resources/Vario.icns
+          dist/Vario.app/Contents/MacOS/vario-gui --version
           dist/Vario.app/Contents/MacOS/vario --version
           plutil -lint dist/Vario.app/Contents/Info.plist
 
@@ -78,5 +78,5 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
-      # The interface needs Rust 1.92 (Slint 1.18); the stable jobs build it.
+      # The interface (Tauri) is built by the stable jobs.
       - run: cargo check --all-targets -p vario-core -p vario

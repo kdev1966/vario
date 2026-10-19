@@ -198,10 +198,10 @@ const FR = {
 let manual = false;
 
 // The pages, with the open one lit.
-const PAGES = ["STATUS", "INSTALL", "DELEGATIONS", "ABOUT"];
+const PAGES = 4;
 function openPage(index) {
   $("confirm").hidden = true;
-  PAGES.forEach((_, i) => {
+  [...Array(PAGES).keys()].forEach((i) => {
     $(`page-${i}`).hidden = i !== index;
     $("pages").children[i].classList.toggle("active", i === index);
   });
@@ -214,7 +214,7 @@ function lamp(state, on = "var(--green)", off = "var(--red)") {
 }
 function indicator(state, caption) {
   const color = state < 0 ? "var(--unlit-text)" : "var(--muted)";
-  return `<div class="indicator">${lamp(state)}<div class="caption" style="color:${color}">${escape(t(caption))}</div></div>`;
+  return `<div class="indicator">${lamp(state)}<div class="caption" style="color:${color}">${escape(caption)}</div></div>`;
 }
 function showStatus(status) {
   $("cards").innerHTML = status.clients.map((client) => `
@@ -222,7 +222,7 @@ function showStatus(status) {
       <div class="name">${escape(client.label)}</div>
       <div class="handoff">${lamp(client.handoff, "var(--green)", "var(--amber)")}
         <span class="caption" style="color:${client.handoff < 0 ? "var(--unlit-text)" : "var(--muted)"}">HANDOFF</span></div>
-      <div class="lamps">${indicator(client.subagents, "AGENTS")}${indicator(client.instructions, "GUIDANCE")}${indicator(client.hooks, "HOOKS")}${indicator(client.quota, "QUOTA")}</div>
+      <div class="lamps">${indicator(client.subagents, t("AGENTS"))}${indicator(client.instructions, t("GUIDANCE"))}${indicator(client.hooks, t("HOOKS"))}${indicator(client.quota, t("QUOTA"))}</div>
       <div class="notes" title="${escape(client.notes)}">${escape(client.notes)}</div>
     </div>`).join("");
   // The display and the keys follow the cards, two per row.
@@ -287,7 +287,8 @@ function refresh() {
 
 async function start() {
   await translate(FR);
-  $("pages").innerHTML = PAGES.map((page) => `<div class="page-key click">${escape(t(page))}</div>`).join("");
+  $("pages").innerHTML = [t("STATUS"), t("INSTALL"), t("DELEGATIONS"), t("ABOUT")]
+    .map((page) => `<div class="page-key click">${escape(page)}</div>`).join("");
   [...$("pages").children].forEach((key, index) => key.addEventListener("click", () => openPage(index)));
   $("version").textContent = `${t("VERSION")} ${await invoke("version")}`;
   openPage(Number(await invoke("first_page")));

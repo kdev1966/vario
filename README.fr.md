@@ -42,7 +42,7 @@ Les hooks consignent chaque délégation aux sous-agents de Vario dans un journa
 
 Claude Code n'exécute les lignes de statut que dans le terminal : le quota est relevé quand vous utilisez Claude Code dans un terminal, pas depuis l'extension VS Code. Le reste (sous-agents, consignes, journal, `vario usage`) fonctionne partout.
 
-**Jauge flottante.** `vario-gui --gauge`, ou **Jauge flottante** dans l'application, ouvre une fenêtre système étroite (156 px), sombre, flottante et sans bordure, dessinée comme un plugin audio et assez fine pour tenir à côté de votre éditeur : au-dessus des autres applications, sur tous les bureaux (et par-dessus les applications en plein écran sur macOS), sans icône dans le Dock ni dans la barre des tâches en mode `--gauge`. Elle montre un VU-mètre à aiguille pour le quota de 5 heures, une rangée de diodes pour celui de 7 jours, l'état du thermostat en voyants, et deux boutons rotatifs pour la part déléguée et le taux d'escalade. Déplacez-la en la saisissant n'importe où.
+**Jauge flottante.** `vario-gui --gauge`, ou **Jauge flottante** dans l'application, ouvre une fenêtre système étroite (156 px), sombre, flottante et sans bordure, dessinée comme un plugin audio et assez fine pour tenir à côté de votre éditeur : au-dessus des autres fenêtres, sur tous les bureaux (et par-dessus les applications en plein écran sur macOS), sans icône dans le Dock ni dans la barre des tâches en mode `--gauge`. Sur macOS, elle suit les applications des agents : elle s'affiche quand VS Code, Cursor ou un terminal (Terminal, iTerm2, Tabby, Warp, Ghostty) est au premier plan, et s'efface derrière toute autre application. Elle montre un VU-mètre à aiguille pour le quota de 5 heures, une rangée de diodes pour celui de 7 jours, l'état du thermostat en voyants, et deux boutons rotatifs pour la part déléguée et le taux d'escalade. Déplacez-la en la saisissant n'importe où.
 
 Elle s'ouvre d'elle-même au début de la session d'un agent, dans chaque client dont Vario a installé les hooks (tous sauf Gemini CLI), et reste affichée quand l'agent se ferme ; décochez **Ouvrir la jauge avec chaque agent** dans la page **Installation** pour ne l'ouvrir qu'à la demande. Quand un client expose un hook d'envoi de prompt, la jauge bascule vers lui dès l'envoi ; sélectionner simplement un autre onglet de chat ne déclenche pas nécessairement le changement. Elle revient là où vous l'avez laissée, sinon dans le coin en haut à droite de l'écran. Une seule tourne à la fois : la rouvrir, ou ouvrir l'application, fait apparaître celle qui tourne. Son lien **ouvrir Vario** ouvre la fenêtre principale à côté d'elle. Lâchées près l'une de l'autre, les deux fenêtres s'aimantent, alignées par le haut ; déplacer la jauge emmène alors la fenêtre principale, et éloigner la fenêtre principale la détache. Fermer la fenêtre principale laisse la jauge affichée.
 
@@ -61,7 +61,7 @@ Elle s'ouvre d'elle-même au début de la session d'un agent, dans chaque client
   ```
 - **Application sous Linux et Windows** : de la même façon, avec `vario-gui-installer.sh` ou `vario-gui-installer.ps1`.
 
-**À partir des sources** (Rust 1.89 ou plus pour la commande, 1.92 pour l'application) :
+**À partir des sources** (Rust 1.89 ou plus ; sous Linux, l'application demande aussi WebKitGTK : `sudo apt install libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev` sous Debian et Ubuntu) :
 
 ```sh
 cargo install --git https://github.com/kdev1966/vario vario
@@ -115,8 +115,8 @@ cargo run -p vario -- doctor
 cargo run -p vario-gui
 ```
 
-L'espace de travail compte trois crates : `vario-core` (toute la logique), `vario` (la commande) et `vario-gui` (l'application, construite avec [Slint](https://slint.dev)). La conception et la feuille de route se trouvent dans [vario-document-de-conception.md](vario-document-de-conception.md), en français.
+L'espace de travail compte trois crates : `vario-core` (toute la logique), `vario` (la commande) et `vario-gui` (l'application, construite avec [Tauri](https://tauri.app) : ses fenêtres sont dessinées par le moteur web du système, à partir des pages de `crates/vario-gui/ui/`). La conception et la feuille de route se trouvent dans [vario-document-de-conception.md](vario-document-de-conception.md), en français.
 
 ## Licence
 
-MIT. L'application est construite avec [Slint](https://slint.dev) sous sa licence gratuite, que son onglet **À propos** mentionne.
+MIT. L'application est construite avec [Tauri](https://tauri.app) (MIT ou Apache-2.0).

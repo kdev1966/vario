@@ -1,40 +1,187 @@
-//! Vario's graphical interface: the same core as the `vario` command, for people who
-//! would rather not use a terminal. The floating gauge follows the quota; the main
-//! window installs, checks, repairs and removes Vario, and shows the delegation
-//! journal.
+//! Vario's interface: the floating gauge and the main window, drawn by the system's web
+//! view through Tauri. All logic lives in vario-core (`vario_core::gauge`,
+//! `vario_core::panel`); the pages in `ui/` only lay out what the commands below return.
 
-use std::cell::RefCell;
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod shell;
+
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::thread;
+use std::time::{Duration, Instant};
 
-use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
-use vario_core::clients::Env;
+use tauri::{AppHandle, Emitter, Manager, State};
+use vario_core::clients::{CodeGeeXActivity, Env};
+use vario_core::gauge::Reading;
 use vario_core::install;
 use vario_core::instance::{self, Want};
 use vario_core::lang::Lang;
-use vario_core::panel::Panel;
-use vario_core::{paths, tr};
+use vario_core::panel::{Choice, Panel, Plan, Report, Status};
+use vario_core::{paths, quota, tr, usage};
 
-use shell::Shell;
+/// The quota is re-read this often; it changes after each answer.
+const QUOTA_EVERY: Duration = Duration::from_secs(5);
+/// The logs are measured this often.
+const USAGE_EVERY: Duration = Duration::from_secs(60);
+/// How often requests from later runs are read.
+const POLL: Duration = Duration::from_millis(300);
 
-mod gauge;
-mod shell;
-
-slint::include_modules!();
-
-/// What the window works on: a [`Panel`], whose views it copies into the window.
-struct App {
-    panel: Panel,
+/// The commands that detect the clients or write files are `async`: Tauri then runs
+/// them off the main thread, which would otherwise freeze both windows meanwhile
+/// (detecting the clients takes seconds).
+struct Ctx {
+    env: Env,
+    data_dir: PathBuf,
+    lang: Lang,
+    /// Read by the pages' looks (status, choices, report) side by side; written by the
+    /// ticks and the installs.
+    panel: RwLock<Panel>,
 }
 
-fn main() -> Result<(), slint::PlatformError> {
+impl Ctx {
+    fn panel(&self) -> RwLockReadGuard<'_, Panel> {
+        self.panel
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn panel_mut(&self) -> RwLockWriteGuard<'_, Panel> {
+        self.panel
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// The language of the labels: the same as the values' (`LANG` first, else the system).
+#[tauri::command]
+fn ui_lang(ctx: State<Ctx>) -> &'static str {
+    match ctx.lang {
+        Lang::En => "en",
+        Lang::Fr => "fr",
+    }
+}
+
+/// A page's error, on the program's output.
+#[tauri::command]
+fn js_error(page: String, message: String) {
+    eprintln!("vario-gui: {page}: {message}");
+}
+
+#[tauri::command]
+fn version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// The page the main window opens on: `VARIO_GUI_TAB=0..3`, for screenshots.
+#[tauri::command]
+fn first_page() -> u8 {
+    std::env::var("VARIO_GUI_TAB")
+        .ok()
+        .and_then(|tab| tab.parse().ok())
+        .filter(|tab| *tab < 4)
+        .unwrap_or(0)
+}
+
+/// The reading of the moment, for the gauge's first drawing; the next ones are events.
+#[tauri::command]
+fn reading(ctx: State<Ctx>) -> Reading {
+    Reading::read(
+        &ctx.data_dir,
+        &quota::usage_cache(&ctx.env),
+        ctx.lang,
+        None,
+        quota::now(),
+    )
+}
+
+#[tauri::command]
+async fn status(ctx: State<'_, Ctx>) -> Result<Status, String> {
+    Ok(ctx.panel().status())
+}
+
+#[tauri::command]
+async fn choices(ctx: State<'_, Ctx>) -> Result<Vec<Choice>, String> {
+    Ok(ctx.panel().choices())
+}
+
+#[tauri::command]
+async fn report(ctx: State<'_, Ctx>) -> Result<Report, String> {
+    Ok(ctx.panel().report())
+}
+
+/// Every detected client ticked again, as when the mode changes.
+#[tauri::command]
+async fn reset_candidates(ctx: State<'_, Ctx>) -> Result<Vec<Choice>, String> {
+    Ok({
+        let mut panel = ctx.panel_mut();
+        panel.reset_candidates();
+        panel.choices()
+    })
+}
+
+#[tauri::command]
+async fn toggle(ctx: State<'_, Ctx>, index: usize, checked: bool) -> Result<Vec<Choice>, String> {
+    Ok({
+        let mut panel = ctx.panel_mut();
+        panel.toggle(index, checked);
+        panel.choices()
+    })
+}
+
+#[tauri::command]
+fn set_gauge_with_sessions(ctx: State<Ctx>, on: bool) {
+    ctx.panel().set_gauge_with_sessions(on);
+}
+
+#[tauri::command]
+async fn preview(ctx: State<'_, Ctx>) -> Result<Plan, String> {
+    Ok(ctx.panel().preview())
+}
+
+#[tauri::command]
+async fn apply(ctx: State<'_, Ctx>) -> Result<String, String> {
+    Ok(ctx.panel_mut().apply())
+}
+
+#[tauri::command]
+async fn repair(ctx: State<'_, Ctx>) -> Result<Option<String>, String> {
+    Ok(ctx.panel_mut().repair())
+}
+
+#[tauri::command]
+async fn remove_all(ctx: State<'_, Ctx>) -> Result<String, String> {
+    Ok(ctx.panel_mut().remove_all())
+}
+
+#[tauri::command]
+fn open_gauge(app: AppHandle) {
+    shell::show(&app, Want::Gauge);
+}
+
+#[tauri::command]
+fn open_main(app: AppHandle) {
+    shell::show(&app, Want::Main);
+}
+
+#[tauri::command]
+fn close_gauge(app: AppHandle) {
+    shell::close(&app, shell::GAUGE);
+}
+
+#[tauri::command]
+fn close_main(app: AppHandle) {
+    shell::close(&app, shell::MAIN);
+}
+
+fn main() {
     let mut env = Env::current();
     env.exe = command_line_path(&env);
     let lang = Lang::detect(&env);
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(answer) = answer_in_terminal(&args, lang) {
         println!("{answer}");
-        return Ok(());
+        return;
     }
     // `vario-gui --gauge`: the floating gauge, as a desktop widget.
     let want = if args.iter().any(|arg| arg == "--gauge") {
@@ -43,123 +190,64 @@ fn main() -> Result<(), slint::PlatformError> {
         Want::Main
     };
     let data_dir = paths::data_dir();
+    let _ = std::fs::create_dir_all(&data_dir);
     let Some(_instance) = instance::claim(&data_dir) else {
         instance::request(&data_dir, want);
-        return Ok(());
+        return;
     };
-    if want == Want::Gauge {
-        gauge::select_widget_backend()?;
-    }
-    let shell = Shell::new(env, data_dir, lang);
-    shell.show(want);
-    // Opens on another page, for screenshots: VARIO_GUI_TAB=0..3.
-    if let (Some(window), Some(tab)) = (
-        shell.main_window(),
-        std::env::var("VARIO_GUI_TAB")
-            .ok()
-            .and_then(|tab| tab.parse().ok()),
-    ) {
-        window.set_current_tab(tab);
-    }
-    shell.listen();
-    slint::run_event_loop()
-}
-
-/// The window, filled and wired to an [`App`] working on `env` and `data_dir`.
-pub(crate) fn open(
-    env: Env,
-    data_dir: PathBuf,
-    lang: Lang,
-) -> Result<(AppWindow, Rc<RefCell<App>>), slint::PlatformError> {
-    let window = AppWindow::new()?;
-    select_translation(lang);
-    window.set_version(env!("CARGO_PKG_VERSION").into());
-
-    let app = Rc::new(RefCell::new(App {
-        panel: Panel::new(env, data_dir, lang),
-    }));
-    app.borrow().refresh(&window);
-
-    let on = |handler: fn(&mut App, &AppWindow)| {
-        let app = Rc::clone(&app);
-        let weak = window.as_weak();
-        move || {
-            if let Some(window) = weak.upgrade() {
-                handler(&mut app.borrow_mut(), &window);
-            }
-        }
+    let data_dir_for_requests = data_dir.clone();
+    let ctx = Ctx {
+        panel: RwLock::new(Panel::new(env.clone(), data_dir.clone(), lang)),
+        env,
+        data_dir,
+        lang,
     };
-    window.on_refresh(on(|app, window| app.refresh(window)));
-    {
-        let app = Rc::clone(&app);
-        window.on_gauge_setting_changed(move |on| {
-            app.borrow().panel.set_gauge_with_sessions(on);
-        });
-    }
-    window.on_repair(on(App::repair));
-    window.on_remove_all(on(App::remove_all));
-    window.on_preview(on(App::preview));
-    window.on_apply(on(App::apply));
-    window.on_mode_changed(on(|app, window| {
-        app.panel.reset_candidates();
-        app.show_candidates(window);
-        window.set_planned(ModelRc::default());
-        window.set_can_apply(false);
-        window.set_install_message(SharedString::new());
-    }));
-    {
-        let app = Rc::clone(&app);
-        let weak = window.as_weak();
-        window.on_toggle_choice(move |index, checked| {
-            app.borrow_mut().panel.toggle(index as usize, checked);
-            if let Some(window) = weak.upgrade() {
-                window.set_planned(ModelRc::default());
-                window.set_can_apply(false);
-            }
-        });
-    }
-    Ok((window, app))
-}
-
-/// Words the `.slint` text in `lang`. Slint picks a bundle from the system locale on
-/// its own, while `lang` may come from `LANG`: an agent that starts the gauge with
-/// `LANG=en_US` must get English labels too, not French ones around English values.
-fn select_translation(lang: Lang) {
-    let _ = slint::select_bundled_translation(match lang {
-        Lang::En => "en",
-        Lang::Fr => "fr",
-    });
-}
-
-/// The main window and the state behind it.
-type MainWindow = (AppWindow, Rc<RefCell<App>>);
-
-/// The floating gauge, fed from a background thread.
-pub(crate) fn open_gauge(
-    env: Env,
-    data_dir: PathBuf,
-    lang: Lang,
-) -> Result<GaugeWindow, slint::PlatformError> {
-    let gauge = GaugeWindow::new()?;
-    select_translation(lang);
-    let usage_cache = vario_core::quota::usage_cache(&env);
-    gauge::show(
-        &vario_core::gauge::Reading::read(
-            &data_dir,
-            &usage_cache,
-            lang,
-            None,
-            vario_core::quota::now(),
-        ),
-        &gauge,
-    );
-    gauge::feed(&gauge, env, data_dir, lang);
-    Ok(gauge)
+    tauri::Builder::default()
+        .manage(ctx)
+        .manage(shell::Shell::default())
+        .invoke_handler(tauri::generate_handler![
+            js_error,
+            ui_lang,
+            version,
+            first_page,
+            reading,
+            status,
+            choices,
+            report,
+            reset_candidates,
+            toggle,
+            set_gauge_with_sessions,
+            preview,
+            apply,
+            repair,
+            remove_all,
+            open_gauge,
+            open_main,
+            close_gauge,
+            close_main,
+        ])
+        .on_window_event(shell::on_window_event)
+        .setup(move |app| {
+            // A desktop widget: no Dock icon until the main window opens.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let handle = app.handle().clone();
+            shell::show(&handle, want);
+            // Ready before it is asked for: the web view and the clients' state take
+            // seconds to come up.
+            shell::prepare_main(&handle);
+            feed(handle.clone());
+            shell::follow_agent_apps(handle.clone());
+            listen(handle, data_dir_for_requests);
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("Vario's interface could not start");
 }
 
 /// Hooks must run the `vario` command, not this interface: the one the installed hooks
 /// already run, so the interface and the command line agree; else the one installed
-/// next to the interface (inside Vario.app); else the one on `PATH`; else plain `vario`.
+/// next to the interface; else the one on `PATH`; else plain `vario`.
 fn command_line_path(env: &Env) -> PathBuf {
     let name = if cfg!(windows) { "vario.exe" } else { "vario" };
     install::hook_program(env)
@@ -173,97 +261,45 @@ fn command_line_path(env: &Env) -> PathBuf {
         .unwrap_or_default()
 }
 
-impl App {
-    fn refresh(&self, window: &AppWindow) {
-        self.show_status(window);
-        self.show_candidates(window);
-        self.show_report(window);
-    }
+/// Answer the requests of the runs started after this one.
+fn listen(app: AppHandle, data_dir: PathBuf) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(POLL);
+            for want in instance::take_requests(&data_dir) {
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || shell::show(&handle, want));
+            }
+        }
+    });
+}
 
-    fn show_candidates(&self, window: &AppWindow) {
-        let choices: Vec<Choice> = self
-            .panel
-            .choices()
-            .into_iter()
-            .map(|choice| Choice {
-                label: choice.label.into(),
-                selected: choice.selected,
-            })
-            .collect();
-        window.set_choices(ModelRc::new(VecModel::from(choices)));
-    }
-
-    fn show_status(&self, window: &AppWindow) {
-        let status = self.panel.status();
-        let rows: Vec<ClientRow> = status
-            .clients
-            .into_iter()
-            .map(|client| ClientRow {
-                label: client.label.into(),
-                subagents: client.subagents,
-                instructions: client.instructions,
-                hooks: client.hooks,
-                quota: client.quota,
-                handoff: client.handoff,
-                notes: client.notes.into(),
-            })
-            .collect();
-        window.set_clients(ModelRc::new(VecModel::from(rows)));
-        window.set_needs_fix(status.needs_fix);
-        window.set_status_message(status.message.into());
-        window.set_gauge_with_sessions(status.gauge_with_sessions);
-        window.set_handoff_hint(status.handoff_hint.into());
-    }
-
-    fn show_report(&self, window: &AppWindow) {
-        let report = self.panel.report();
-        let rows: Vec<ReportRow> = report
-            .rows
-            .into_iter()
-            .map(|row| ReportRow {
-                agent: row.agent.into(),
-                delegations: row.delegations,
-                escalated: row.escalated,
-                escalated_share: row.escalated_share,
-                without_footer: row.without_footer,
-                without_footer_share: row.without_footer_share,
-            })
-            .collect();
-        window.set_report_period(report.period.into());
-        window.set_report_rows(ModelRc::new(VecModel::from(rows)));
-        window.set_journal(report.journal.into());
-    }
-
-    /// Show what installing the ticked clients would change, without writing anything.
-    fn preview(&mut self, window: &AppWindow) {
-        let plan = self.panel.preview();
-        window.set_can_apply(plan.can_apply);
-        window.set_install_message(plan.message.into());
-        window.set_planned(list(plan.planned));
-    }
-
-    fn apply(&mut self, window: &AppWindow) {
-        let message = self.panel.apply();
-        window.set_install_message(message.into());
-        window.set_planned(ModelRc::default());
-        window.set_can_apply(false);
-        self.show_status(window);
-    }
-
-    /// Reinstall what is missing in the clients the user chose.
-    fn repair(&mut self, window: &AppWindow) {
-        let Some(message) = self.panel.repair() else {
-            return;
-        };
-        self.show_status(window);
-        window.set_status_message(message.into());
-    }
-
-    fn remove_all(&mut self, window: &AppWindow) {
-        let message = self.panel.remove_all();
-        self.show_status(window);
-        window.set_status_message(message.into());
-    }
+/// Keep the gauge up to date from a background thread, until the application ends.
+fn feed(app: AppHandle) {
+    thread::spawn(move || {
+        let ctx = app.state::<Ctx>();
+        let usage_cache = quota::usage_cache(&ctx.env);
+        let mut codegeex_activity = CodeGeeXActivity::new(&ctx.env);
+        let mut delegated = None;
+        let mut measured: Option<Instant> = None;
+        loop {
+            if measured.is_none_or(|at| at.elapsed() >= USAGE_EVERY) {
+                let since = quota::now() - 5 * 3600;
+                delegated = usage::claude_code(&ctx.env, since).delegated_share();
+                measured = Some(Instant::now());
+            }
+            let reading = Reading::read_with_activity(
+                &ctx.data_dir,
+                &usage_cache,
+                ctx.lang,
+                delegated,
+                codegeex_activity.read(),
+                quota::now(),
+            );
+            let _ = app.emit_to(shell::GAUGE, "reading", reading);
+            thread::sleep(QUOTA_EVERY);
+        }
+    });
 }
 
 /// `--version` and `--help` answer in the terminal instead of opening a window.
@@ -291,56 +327,11 @@ fn answer_in_terminal(args: &[String], lang: Lang) -> Option<String> {
     })
 }
 
-fn list(lines: Vec<String>) -> ModelRc<StandardListViewItem> {
-    let items: Vec<StandardListViewItem> = lines
-        .into_iter()
-        .map(|line| StandardListViewItem::from(SharedString::from(line)))
-        .collect();
-    ModelRc::new(VecModel::from(items))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use slint::Model;
-    use std::fs;
+    use std::collections::BTreeSet;
     use std::path::Path;
-    use vario_core::report;
-
-    const USER_RULES: &str = "# My rules\n";
-
-    /// A home where Claude Code is installed, with the user's own `CLAUDE.md`.
-    struct Fixture {
-        _dir: tempfile::TempDir,
-        env: Env,
-        data_dir: PathBuf,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let home = dir.path().join("home");
-            fs::create_dir_all(home.join(".claude")).unwrap();
-            fs::write(home.join(".claude").join("CLAUDE.md"), USER_RULES).unwrap();
-            Fixture {
-                data_dir: dir.path().join("data"),
-                env: Env {
-                    home,
-                    ..Env::default()
-                },
-                _dir: dir,
-            }
-        }
-
-        fn open(&self) -> (AppWindow, Rc<RefCell<App>>) {
-            i_slint_backend_testing::init_no_event_loop();
-            open(self.env.clone(), self.data_dir.clone(), Lang::En).unwrap()
-        }
-
-        fn claude(&self) -> PathBuf {
-            self.env.home.join(".claude")
-        }
-    }
 
     #[test]
     fn version_and_help_answer_without_a_window() {
@@ -356,223 +347,60 @@ mod tests {
         assert_eq!(answer_in_terminal(&[], Lang::En), None);
     }
 
-    #[test]
-    fn a_fresh_machine_installs_from_the_window() {
-        let fixture = Fixture::new();
-        let (window, _app) = fixture.open();
-        assert!(window.get_status_message().contains("not set up yet"));
-        let choices: Vec<(String, bool)> = window
-            .get_choices()
-            .iter()
-            .map(|choice| (choice.label.to_string(), choice.selected))
-            .collect();
-        assert_eq!(choices, vec![("Claude Code".to_string(), true)]);
-
-        window.invoke_preview();
-        assert_eq!(
-            window.get_planned().row_count(),
-            5,
-            "two agents, CLAUDE.md, then settings.json for the hooks and the status line"
-        );
-        assert!(window.get_can_apply());
-        assert!(!fixture.claude().join("agents").exists());
-        assert!(!fixture.claude().join("settings.json").exists());
-
-        window.invoke_apply();
-        assert!(
-            fixture
-                .claude()
-                .join("agents")
-                .join("vario-reader.md")
-                .exists()
-        );
-        assert!(
-            fixture
-                .claude()
-                .join("agents")
-                .join("vario-worker.md")
-                .exists()
-        );
-        assert!(
-            window
-                .get_install_message()
-                .starts_with("Done: 5 change(s)."),
-            "{}",
-            window.get_install_message()
-        );
-        let row = window
-            .get_clients()
-            .iter()
-            .find(|row| row.label == "Claude Code")
-            .expect("a Claude Code row");
-        assert_eq!(
-            (row.subagents, row.instructions, row.hooks, row.quota),
-            (1, 1, 1, 1)
-        );
-        assert_eq!(row.handoff, -1, "Handoff is not installed here");
-        assert_eq!(window.get_status_message(), "Everything is in place.");
-        let setup = fs::read_to_string(fixture.data_dir.join("setup.json")).unwrap();
-        assert!(setup.contains("claude"), "{setup}");
+    /// The quoted texts that follow `start` in `page`, up to their closing quote.
+    fn quoted_after(page: &str, start: &str) -> Vec<String> {
+        page.split(start)
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .map(str::to_string)
+            .collect()
     }
 
-    #[test]
-    fn manual_mode_declines_an_unticked_client() {
-        let fixture = Fixture::new();
-        let (window, _app) = fixture.open();
-        window.set_manual(true);
-        window.invoke_mode_changed();
-        window.invoke_toggle_choice(0, false);
-        window.invoke_preview();
-        assert!(
-            window
-                .get_install_message()
-                .contains("No client is ticked.")
-        );
-        assert!(!window.get_can_apply());
-    }
-
-    #[test]
-    fn remove_all_puts_the_files_back() {
-        let fixture = Fixture::new();
-        let (window, _app) = fixture.open();
-        window.invoke_apply();
-        assert!(
-            fixture
-                .claude()
-                .join("agents")
-                .join("vario-reader.md")
-                .exists()
-        );
-
-        window.invoke_remove_all();
-        let rules = fs::read_to_string(fixture.claude().join("CLAUDE.md")).unwrap();
-        assert_eq!(rules, USER_RULES);
-        assert!(
-            !fixture
-                .claude()
-                .join("agents")
-                .join("vario-reader.md")
-                .exists()
-        );
-        assert!(
-            !fixture
-                .claude()
-                .join("agents")
-                .join("vario-worker.md")
-                .exists()
-        );
-        assert!(!fixture.claude().join("settings.json").exists());
-        assert!(!fixture.data_dir.join("setup.json").exists());
-    }
-
-    #[test]
-    fn the_delegations_tab_reads_the_journal() {
-        let fixture = Fixture::new();
-        fs::create_dir_all(&fixture.data_dir).unwrap();
-        let lines = [
-            r#"{"time":"2026-10-16T10:00:00+01:00","client":"claude","agent":"vario-worker","result":"ok","escalate":false}"#,
-            r#"{"time":"2026-10-16T11:00:00+01:00","client":"claude","agent":"vario-worker","result":"stuck","escalate":true}"#,
-        ];
-        fs::write(
-            report::journal_path(&fixture.data_dir),
-            lines.join("\n") + "\n",
-        )
-        .unwrap();
-        let (window, _app) = fixture.open();
-        let rows: Vec<ReportRow> = window.get_report_rows().iter().collect();
-        let worker = rows
-            .iter()
-            .find(|row| row.agent == "VARIO-WORKER")
-            .expect("a vario-worker channel");
-        assert_eq!(worker.delegations, 2);
-        assert_eq!(worker.escalated, 1);
-        assert_eq!(worker.escalated_share, 50.0);
-        assert_eq!(worker.without_footer_share, 0.0);
-        assert!(rows.iter().any(|row| row.agent == "TOTAL"));
-        assert!(window.get_report_period().contains("Delegations from"));
-    }
-
-    /// The text of the first string literal in `text`, with its escapes resolved.
-    fn first_literal(text: &str) -> Option<String> {
-        let mut chars = text.chars();
-        if chars.next()? != '"' {
-            return None;
-        }
-        let mut out = String::new();
-        while let Some(c) = chars.next() {
-            match c {
-                '"' => return Some(out),
-                '\\' => match chars.next()? {
-                    'n' => out.push('\n'),
-                    other => out.push(other),
-                },
-                c => out.push(c),
-            }
-        }
-        None
-    }
-
-    /// Every (context, text) of the catalogue with a non-empty translation.
-    fn translated(po: &str) -> Vec<(String, String)> {
-        let mut found = Vec::new();
-        let (mut context, mut id) = (String::new(), String::new());
-        for line in po.lines().map(str::trim) {
-            if let Some(rest) = line.strip_prefix("msgctxt ") {
-                context = first_literal(rest).unwrap_or_default();
-            } else if let Some(rest) = line.strip_prefix("msgid ") {
-                id = first_literal(rest).unwrap_or_default();
-            } else if let Some(rest) = line.strip_prefix("msgstr ")
-                && !id.is_empty()
-                && !first_literal(rest).unwrap_or_default().is_empty()
-            {
-                found.push((std::mem::take(&mut context), std::mem::take(&mut id)));
-            }
-        }
-        found
-    }
-
-    /// Every (component, text) marked with `@tr`: Slint looks a text up in the context
-    /// of the component that holds it.
-    fn marked(slint: &str) -> Vec<(String, String)> {
-        let mut found = Vec::new();
-        let mut component = String::new();
-        for line in slint
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-        {
-            let words: Vec<&str> = line.split_whitespace().collect();
-            if let Some(at) = words.iter().position(|word| *word == "component") {
-                component = words.get(at + 1).unwrap_or(&"").to_string();
-            }
-            for rest in line.split("@tr(").skip(1) {
-                if let Some(text) = first_literal(rest) {
-                    found.push((component.clone(), text));
-                }
-            }
-        }
-        found
+    /// The texts given to `t("…")`, not to calls whose name ends in t (`closest("…")`).
+    fn calls_of_t(page: &str) -> Vec<String> {
+        page.match_indices("t(\"")
+            .filter(|(at, _)| {
+                page[..*at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|before| !(before.is_alphanumeric() || "_$.".contains(before)))
+            })
+            .filter_map(|(at, _)| page[at + 3..].split('"').next())
+            .map(str::to_string)
+            .collect()
     }
 
     #[test]
     fn every_interface_text_is_translated_to_french() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let marked: Vec<(String, String)> = ["app.slint", "gauge.slint", "theme.slint"]
-            .iter()
-            .flat_map(|file| marked(&fs::read_to_string(root.join("ui").join(file)).unwrap()))
-            .collect();
-        let po = fs::read_to_string(
-            root.join("lang")
-                .join("fr")
-                .join("LC_MESSAGES")
-                .join("vario-gui.po"),
-        )
-        .unwrap();
-        let translated = translated(&po);
-        assert!(marked.len() > 30, "found only {} texts", marked.len());
-        let missing: Vec<&(String, String)> = marked
-            .iter()
-            .filter(|text| !translated.contains(text))
-            .collect();
-        assert!(missing.is_empty(), "not translated to French: {missing:#?}");
+        let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+        let mut checked = 0;
+        for file in ["index.html", "main.html"] {
+            let page = std::fs::read_to_string(ui.join(file)).unwrap();
+            // The texts to translate: `data-t="…"` attributes and `t("…")` calls.
+            let marked: BTreeSet<String> = quoted_after(&page, "data-t=\"")
+                .into_iter()
+                .chain(calls_of_t(&page))
+                .collect();
+            // The page's French words: the `"…": "…"` keys of its `FR` table.
+            let table = page
+                .split("const FR = {")
+                .nth(1)
+                .unwrap()
+                .split("};")
+                .next()
+                .unwrap();
+            let french: BTreeSet<String> = table
+                .split("\":")
+                .filter_map(|before| before.rsplit('"').next())
+                .map(str::to_string)
+                .collect();
+            let missing: Vec<&String> = marked.difference(&french).collect();
+            assert!(
+                missing.is_empty(),
+                "{file}: not translated to French: {missing:#?}"
+            );
+            checked += marked.len();
+        }
+        assert!(checked > 40, "found only {checked} texts");
     }
 }

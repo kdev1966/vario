@@ -2,456 +2,447 @@
 //!
 //! Either opens the other. Released close to each other, they snap side by side, tops
 //! aligned, and stay docked: dragging the gauge brings the main window along, and
-//! dragging the main window away undocks it. Closing the main window leaves the gauge
-//! up; the process ends with its last window.
+//! dragging the main window away undocks it (the geometry is `vario_core::dock`'s). The
+//! gauge comes back where it was left.
+//! Closing the main window leaves the gauge up; the process ends with its last window.
 
-use std::cell::{Cell, RefCell};
-use std::path::{Path, PathBuf};
-use std::rc::{Rc, Weak};
+use std::sync::Mutex;
+use std::thread;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
-use slint::{ComponentHandle, PhysicalPosition, Timer, TimerMode};
-use vario_core::clients::Env;
-use vario_core::lang::Lang;
-
-use crate::{AppWindow, GaugeWindow, MainWindow, gauge};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    Window, WindowEvent,
+};
 use vario_core::dock::{self, Rect, Side};
-use vario_core::instance::{self, Want};
+use vario_core::instance::Want;
+use vario_core::paths;
+
+pub const GAUGE: &str = "gauge";
+pub const MAIN: &str = "main";
 
 /// How close, in logical pixels, a released window must be to snap.
-const REACH: f32 = 24.0;
+const REACH: f64 = 24.0;
 /// The gauge's margin from the screen's corner, in logical pixels.
-const MARGIN: f32 = 24.0;
+const MARGIN: f64 = 24.0;
 /// A window counts as released when it has not moved for this long.
 const SETTLE: Duration = Duration::from_millis(250);
-/// A new main window ignores clicks this long: it may open under the pointer.
-const ARMING: Duration = Duration::from_millis(600);
-/// How often requests from later `vario-gui` runs are read.
-const POLL: Duration = Duration::from_millis(300);
-/// Where the gauge was left, in physical pixels.
-const PLACES: &str = "gui.json";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Which {
-    Gauge,
-    Main,
-}
+/// The docking state, shared by the window events.
+#[derive(Default)]
+pub struct Shell(Mutex<Docking>);
 
-pub struct Shell {
-    env: Env,
-    data_dir: PathBuf,
-    lang: Lang,
-    main: RefCell<Option<MainWindow>>,
-    gauge: RefCell<Option<GaugeWindow>>,
-    main_shown: Cell<bool>,
-    gauge_shown: Cell<bool>,
+#[derive(Default)]
+struct Docking {
     /// The main window's side of the gauge, while the two are docked.
-    docked: Cell<Option<Side>>,
-    /// Where Vario itself last put each window: the move the system reports back
-    /// for it is not the user's.
-    placed_gauge: Cell<Option<(i32, i32)>>,
-    placed_main: Cell<Option<(i32, i32)>>,
-    last_moved: Cell<Option<Which>>,
-    settle: Timer,
-    poll: Timer,
-    /// Shows the gauge over the agents' applications only.
-    follow: Timer,
+    docked: Option<Side>,
+    /// Where Vario itself last put each window: the move the system reports back for
+    /// it is not the user's.
+    placed_gauge: Option<(i32, i32)>,
+    placed_main: Option<(i32, i32)>,
+    last_moved: Option<&'static str>,
+    /// Counts the moves, so only the last one settles.
+    moves: u64,
 }
 
 impl Shell {
-    pub fn new(env: Env, data_dir: PathBuf, lang: Lang) -> Rc<Shell> {
-        Rc::new(Shell {
-            env,
-            data_dir,
-            lang,
-            main: RefCell::default(),
-            gauge: RefCell::default(),
-            main_shown: Cell::new(false),
-            gauge_shown: Cell::new(false),
-            docked: Cell::new(None),
-            placed_gauge: Cell::new(None),
-            placed_main: Cell::new(None),
-            last_moved: Cell::new(None),
-            settle: Timer::default(),
-            poll: Timer::default(),
-            follow: Timer::default(),
-        })
+    fn with<T>(&self, job: impl FnOnce(&mut Docking) -> T) -> T {
+        let mut docking = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        job(&mut docking)
     }
+}
 
-    pub fn show(self: &Rc<Self>, want: Want) {
-        match want {
-            Want::Gauge => self.show_gauge(),
-            Want::Main => self.show_main(),
-        }
+/// Open the gauge or the main window, or bring it back.
+pub fn show(app: &AppHandle, want: Want) {
+    match want {
+        Want::Gauge => show_gauge(app),
+        Want::Main => show_main(app),
     }
+}
 
-    /// Answer the requests of the `vario-gui` runs started after this one.
-    pub fn listen(self: &Rc<Self>) {
-        let weak = Rc::downgrade(self);
-        self.poll.start(TimerMode::Repeated, POLL, move || {
-            if let Some(shell) = weak.upgrade() {
-                for want in instance::take_requests(&shell.data_dir) {
-                    shell.show(want);
-                }
-            }
-        });
-    }
-
-    /// The main window, opened if needed (for screenshots and tests).
-    pub fn main_window(&self) -> Option<AppWindow> {
-        self.main
-            .borrow()
-            .as_ref()
-            .map(|(window, _)| window.clone_strong())
-    }
-
-    fn gauge_window(&self) -> Option<GaugeWindow> {
-        self.gauge
-            .borrow()
-            .as_ref()
-            .map(ComponentHandle::clone_strong)
-    }
-
-    fn show_gauge(self: &Rc<Self>) {
-        if self.gauge.borrow().is_none() {
-            let Ok(gauge) = crate::open_gauge(self.env.clone(), self.data_dir.clone(), self.lang)
+fn show_gauge(app: &AppHandle) {
+    let gauge = match app.get_webview_window(GAUGE) {
+        Some(gauge) => gauge,
+        None => {
+            let Ok(gauge) =
+                WebviewWindowBuilder::new(app, GAUGE, WebviewUrl::App("index.html".into()))
+                    .title("Vario")
+                    .inner_size(156.0, 494.0)
+                    .resizable(false)
+                    .decorations(false)
+                    .transparent(true)
+                    .shadow(false)
+                    .always_on_top(true)
+                    .skip_taskbar(true)
+                    .visible_on_all_workspaces(true)
+                    .focused(false)
+                    .visible(false)
+                    .build()
             else {
                 return;
             };
-            let weak = Rc::downgrade(self);
-            gauge.on_close_gauge(move || {
-                if let Some(shell) = weak.upgrade() {
-                    shell.hide(Which::Gauge);
-                }
-            });
-            let weak = Rc::downgrade(self);
-            gauge.on_open_main(move || {
-                if let Some(shell) = weak.upgrade() {
-                    shell.show_main();
-                }
-            });
-            self.watch(gauge.window(), Which::Gauge);
-            gauge::follow_agent_apps(&gauge, &self.follow);
-            *self.gauge.borrow_mut() = Some(gauge);
+            place_gauge(app, &gauge);
+            #[cfg(target_os = "macos")]
+            macos::join_every_space(&gauge);
+            gauge
         }
-        let Some(gauge) = self.gauge_window() else {
-            return;
-        };
-        let first = !self.gauge_shown.get();
-        if gauge.show().is_err() {
-            return;
-        }
-        self.gauge_shown.set(true);
-        // The system window exists once the event loop has run: float and place it then.
-        self.later(move |shell| {
-            gauge::float(&gauge);
-            if first {
-                shell.place_gauge(&gauge);
-            }
-        });
-    }
+    };
+    put_on_screen(&gauge);
+}
 
-    /// The gauge's first place: beside the main window when it is open, on its roomy
-    /// side; else where it was left, or in the screen's top right corner.
-    fn place_gauge(&self, gauge: &GaugeWindow) {
-        let scale = gauge.window().scale_factor();
-        let size = gauge.window().size();
-        match self.main_window().filter(|_| self.main_shown.get()) {
-            Some(main) => {
-                let main = rect(main.window());
-                let side = match dock::roomy_side(main, screen(gauge.window())) {
-                    // Room on the main window's left: the gauge goes there.
-                    Side::Left => Side::Right,
-                    Side::Right => Side::Left,
-                };
-                let (x, y) = dock::gauge_beside(main, size.width as i32, side);
-                self.place(Which::Gauge, x, y);
-                self.docked.set(Some(side));
-            }
-            None => {
-                let saved =
-                    load_place(&self.data_dir).filter(|&(x, y)| on_a_screen(gauge.window(), x, y));
-                let place = saved.or_else(|| {
-                    screen(gauge.window()).map(|screen| {
-                        dock::corner(screen, size.width as i32, (MARGIN * scale) as i32)
-                    })
-                });
-                if let Some((x, y)) = place {
-                    self.place(Which::Gauge, x, y);
-                }
-            }
-        }
-    }
-
-    fn show_main(self: &Rc<Self>) {
-        if self.main.borrow().is_none() {
-            let Ok((window, app)) = crate::open(self.env.clone(), self.data_dir.clone(), self.lang)
-            else {
-                return;
+/// The gauge's first place: beside the main window when it is open, on its roomy side;
+/// else in the screen's top right corner.
+fn place_gauge(app: &AppHandle, gauge: &WebviewWindow) {
+    let Some(gauge_rect) = rect(gauge) else {
+        return;
+    };
+    // The main window stays built while hidden: only a shown one counts.
+    match app
+        .get_webview_window(MAIN)
+        .filter(|main| main.is_visible().unwrap_or(false))
+        .and_then(|main| rect(&main).map(|r| (main, r)))
+    {
+        Some((main, main_rect)) => {
+            let side = match dock::roomy_side(main_rect, screen(&main)) {
+                // Room on the main window's left: the gauge goes there.
+                Side::Left => Side::Right,
+                Side::Right => Side::Left,
             };
-            let weak = Rc::downgrade(self);
-            window.on_open_gauge(move || {
-                if let Some(shell) = weak.upgrade() {
-                    shell.show_gauge();
-                }
+            let (x, y) = dock::gauge_beside(main_rect, gauge_rect.width, side);
+            place(app, GAUGE, x, y);
+            app.state::<Shell>().with(|d| d.docked = Some(side));
+        }
+        // Where it was left, if that is still on a screen; else the top right corner.
+        None => {
+            let saved =
+                dock::load_place(&paths::data_dir()).filter(|&(x, y)| on_a_screen(gauge, x, y));
+            let place_at = saved.or_else(|| {
+                screen(gauge).map(|screen| {
+                    let margin = (MARGIN * gauge.scale_factor().unwrap_or(1.0)) as i32;
+                    dock::corner(screen, gauge_rect.width, margin)
+                })
             });
-            let weak = Rc::downgrade(self);
-            window.on_close_main(move || {
-                if let Some(shell) = weak.upgrade() {
-                    shell.hide(Which::Main);
-                }
-            });
-            self.watch(window.window(), Which::Main);
-            *self.main.borrow_mut() = Some((window, app));
+            if let Some((x, y)) = place_at {
+                place(app, GAUGE, x, y);
+            }
         }
-        let Some(main) = self.main_window() else {
-            return;
+    }
+}
+
+/// The main window, built hidden if it is not there yet: its page loads and reads the
+/// clients' state meanwhile.
+pub fn prepare_main(app: &AppHandle) -> Option<WebviewWindow> {
+    if let Some(main) = app.get_webview_window(MAIN) {
+        return Some(main);
+    }
+    WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("main.html".into()))
+        .title("Vario")
+        .inner_size(640.0, 494.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .visible(false)
+        .build()
+        .ok()
+}
+
+fn show_main(app: &AppHandle) {
+    let Some(main) = prepare_main(app) else {
+        return;
+    };
+    // A window with a Dock icon while the main window is open.
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    if !main.is_visible().unwrap_or(false) {
+        place_main(app, &main);
+        // The page shows what it read before, and reads it again.
+        let _ = main.emit("shown", ());
+    }
+    let _ = main.show();
+    let _ = main.set_focus();
+}
+
+/// Beside the gauge, on its roomy side, and docked; else where the system puts it.
+fn place_main(app: &AppHandle, main: &WebviewWindow) {
+    let Some(gauge) = app.get_webview_window(GAUGE) else {
+        let _ = main.center();
+        return;
+    };
+    let (Some(gauge_rect), Some(main_rect)) = (rect(&gauge), rect(main)) else {
+        return;
+    };
+    let side = dock::roomy_side(gauge_rect, screen(&gauge));
+    let (x, y) = dock::main_beside(gauge_rect, main_rect.width, side);
+    place(app, MAIN, x, y);
+    app.state::<Shell>().with(|d| d.docked = Some(side));
+}
+
+/// Close the gauge, or put the main window away (kept ready, hidden). The process ends
+/// when neither shows any more.
+pub fn close(app: &AppHandle, label: &str) {
+    app.state::<Shell>().with(|d| d.docked = None);
+    let main_shown = || {
+        app.get_webview_window(MAIN)
+            .is_some_and(|main| main.is_visible().unwrap_or(false))
+    };
+    if label == MAIN {
+        if let Some(main) = app.get_webview_window(MAIN) {
+            let _ = main.hide();
+        }
+        // Back to a desktop widget: no Dock icon while only the gauge shows.
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        if app.get_webview_window(GAUGE).is_none() {
+            app.exit(0);
+        }
+    } else {
+        if let Some(gauge) = app.get_webview_window(GAUGE) {
+            let _ = gauge.close();
+        }
+        if !main_shown() {
+            app.exit(0);
+        }
+    }
+}
+
+/// Follow the windows' moves for the magnetism, and their closing.
+pub fn on_window_event(window: &Window, event: &WindowEvent) {
+    let app = window.app_handle();
+    let label: &'static str = match window.label() {
+        GAUGE => GAUGE,
+        MAIN => MAIN,
+        _ => return,
+    };
+    match event {
+        WindowEvent::Moved(at) => moved(app, label, at.x, at.y),
+        WindowEvent::Destroyed => app.state::<Shell>().with(|d| d.docked = None),
+        _ => {}
+    }
+}
+
+fn moved(app: &AppHandle, label: &'static str, x: i32, y: i32) {
+    let shell = app.state::<Shell>();
+    let ours = shell.with(|d| {
+        let placed = match label {
+            GAUGE => d.placed_gauge.take(),
+            _ => d.placed_main.take(),
         };
-        let reopened = self.main_shown.get();
-        gauge::show_in_dock(true);
-        if main.show().is_err() {
-            return;
-        }
-        self.main_shown.set(true);
-        if !reopened {
-            main.set_ready(false);
-            let weak = main.as_weak();
-            Timer::single_shot(ARMING, move || {
-                if let Some(main) = weak.upgrade() {
-                    main.set_ready(true);
-                }
-            });
-        }
-        self.later(move |shell| {
-            gauge::bring_to_front(main.window());
-            if !reopened {
-                shell.place_main(&main);
-            }
-        });
-    }
-
-    /// The main window's first place: beside the gauge when it is up, on the side
-    /// with room.
-    fn place_main(&self, main: &AppWindow) {
-        if let Some(gauge) = self.gauge_window().filter(|_| self.gauge_shown.get()) {
-            let gauge_rect = rect(gauge.window());
-            let side = dock::roomy_side(gauge_rect, screen(gauge.window()));
-            let width = main.window().size().width as i32;
-            let (x, y) = dock::main_beside(gauge_rect, width, side);
-            self.place(Which::Main, x, y);
-            self.docked.set(Some(side));
-        }
-    }
-
-    /// Run once the event loop has handled what is pending, the new windows included.
-    fn later(self: &Rc<Self>, job: impl FnOnce(&Rc<Shell>) + 'static) {
-        let weak = Rc::downgrade(self);
-        Timer::single_shot(Duration::from_millis(50), move || {
-            if let Some(shell) = weak.upgrade() {
-                job(&shell);
-            }
-        });
-    }
-
-    fn hide(&self, which: Which) {
-        self.docked.set(None);
-        match which {
-            Which::Gauge => {
-                if let Some(gauge) = self.gauge_window() {
-                    let _ = gauge.hide();
-                }
-                self.gauge_shown.set(false);
-            }
-            Which::Main => {
-                if let Some(main) = self.main_window() {
-                    let _ = main.hide();
-                }
-                self.main_shown.set(false);
-                // Back to a desktop widget: no Dock icon while only the gauge shows.
-                if self.gauge_shown.get() {
-                    gauge::show_in_dock(false);
-                }
-            }
-        }
-        // With no window left, the event loop ends, and the process with it.
-    }
-
-    /// Follow the window's moves, for the magnetism.
-    fn watch(self: &Rc<Self>, window: &slint::Window, which: Which) {
-        let weak = Rc::downgrade(self);
-        window.on_winit_window_event(move |_, event| {
-            if let winit::event::WindowEvent::Moved(at) = event
-                && let Some(shell) = weak.upgrade()
-            {
-                shell.moved(which, at.x, at.y);
-            }
-            EventResult::Propagate
-        });
-    }
-
-    fn moved(self: &Rc<Self>, which: Which, x: i32, y: i32) {
-        let placed = match which {
-            Which::Gauge => self.placed_gauge.take(),
-            Which::Main => self.placed_main.take(),
-        };
-        if placed.is_some_and(|(px, py)| (px - x).abs() <= 2 && (py - y).abs() <= 2) {
-            return;
-        }
-        match which {
-            // The docked main window follows the gauge.
-            Which::Gauge => {
-                if let (Some(side), Some(gauge), Some(main)) =
-                    (self.docked.get(), self.gauge_window(), self.main_window())
-                {
-                    let width = main.window().size().width as i32;
-                    let (x, y) = dock::main_beside(rect(gauge.window()), width, side);
-                    self.place(Which::Main, x, y);
-                }
-            }
-            // Dragging the main window takes it off the gauge.
-            Which::Main => self.docked.set(None),
-        }
-        self.last_moved.set(Some(which));
-        let weak: Weak<Shell> = Rc::downgrade(self);
-        self.settle.start(TimerMode::SingleShot, SETTLE, move || {
-            if let Some(shell) = weak.upgrade() {
-                shell.settled();
-            }
-        });
-    }
-
-    /// A window was released: snap it beside the other when close enough.
-    fn settled(&self) {
-        let Some(which) = self.last_moved.take() else {
-            return;
-        };
-        let (Some(gauge), Some(main)) = (self.gauge_window(), self.main_window()) else {
-            self.remember_gauge();
-            return;
-        };
-        if self.docked.get().is_none() && self.gauge_shown.get() && self.main_shown.get() {
-            let reach = (REACH * gauge.window().scale_factor()) as i32;
-            let (gauge_rect, main_rect) = (rect(gauge.window()), rect(main.window()));
-            if let Some(side) = dock::snap(main_rect, gauge_rect, reach) {
-                match which {
-                    Which::Main => {
-                        let (x, y) = dock::main_beside(gauge_rect, main_rect.width, side);
-                        self.place(Which::Main, x, y);
-                    }
-                    Which::Gauge => {
-                        let (x, y) = dock::gauge_beside(main_rect, gauge_rect.width, side);
-                        self.place(Which::Gauge, x, y);
-                    }
-                }
-                self.docked.set(Some(side));
-            }
-        }
-        self.remember_gauge();
-    }
-
-    /// Move a window, noting that the move is Vario's own.
-    fn place(&self, which: Which, x: i32, y: i32) {
-        let at = PhysicalPosition::new(x, y);
-        match which {
-            Which::Gauge => {
-                if let Some(gauge) = self.gauge_window() {
-                    self.placed_gauge.set(Some((x, y)));
-                    gauge.window().set_position(at);
-                }
-            }
-            Which::Main => {
-                if let Some(main) = self.main_window() {
-                    self.placed_main.set(Some((x, y)));
-                    main.window().set_position(at);
-                }
-            }
-        }
-    }
-
-    fn remember_gauge(&self) {
-        if let Some(gauge) = self.gauge_window().filter(|_| self.gauge_shown.get()) {
-            let at = gauge.window().position();
-            save_place(&self.data_dir, (at.x, at.y));
-        }
-    }
-}
-
-/// A window's outer rectangle.
-fn rect(window: &slint::Window) -> Rect {
-    let (at, size) = (window.position(), window.size());
-    Rect {
-        x: at.x,
-        y: at.y,
-        width: size.width as i32,
-        height: size.height as i32,
-    }
-}
-
-/// The screen the window is on; the main screen while the system does not say yet.
-fn screen(window: &slint::Window) -> Option<Rect> {
-    window
-        .with_winit_window(|window| {
-            window
-                .current_monitor()
-                .or_else(|| window.primary_monitor())
-                .or_else(|| window.available_monitors().next())
-        })
-        .flatten()
-        .map(|monitor| monitor_rect(&monitor))
-}
-
-fn monitor_rect(monitor: &winit::monitor::MonitorHandle) -> Rect {
-    let (at, size) = (monitor.position(), monitor.size());
-    Rect {
-        x: at.x,
-        y: at.y,
-        width: size.width as i32,
-        height: size.height as i32,
-    }
-}
-
-/// Whether a saved place is still on a connected screen.
-fn on_a_screen(window: &slint::Window, x: i32, y: i32) -> bool {
-    window
-        .with_winit_window(|window| {
-            window
-                .available_monitors()
-                .any(|monitor| monitor_rect(&monitor).contains(x + 8, y + 8))
-        })
-        .unwrap_or(false)
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct Places {
-    gauge: Option<(i32, i32)>,
-}
-
-fn load_place(data_dir: &Path) -> Option<(i32, i32)> {
-    let text = std::fs::read_to_string(data_dir.join(PLACES)).ok()?;
-    serde_json::from_str::<Places>(&text).ok()?.gauge
-}
-
-fn save_place(data_dir: &Path, at: (i32, i32)) {
-    if load_place(data_dir) == Some(at) {
+        placed.is_some_and(|(px, py)| (px - x).abs() <= 2 && (py - y).abs() <= 2)
+    });
+    if ours {
         return;
     }
-    let json = serde_json::to_string(&Places { gauge: Some(at) }).expect("places serialize");
-    let _ = std::fs::write(data_dir.join(PLACES), json + "\n");
+    if label == GAUGE {
+        // The docked main window follows the gauge.
+        let docked = shell.with(|d| d.docked);
+        if let (Some(side), Some(gauge), Some(main)) = (
+            docked,
+            app.get_webview_window(GAUGE),
+            app.get_webview_window(MAIN),
+        ) && let (Some(gauge_rect), Some(main_rect)) = (rect(&gauge), rect(&main))
+        {
+            let (x, y) = dock::main_beside(gauge_rect, main_rect.width, side);
+            place(app, MAIN, x, y);
+        }
+    } else {
+        // Dragging the main window takes it off the gauge.
+        shell.with(|d| d.docked = None);
+    }
+    let move_number = shell.with(|d| {
+        d.last_moved = Some(label);
+        d.moves += 1;
+        d.moves
+    });
+    let handle = app.clone();
+    thread::spawn(move || {
+        thread::sleep(SETTLE);
+        let app = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            if app.state::<Shell>().with(|d| d.moves) == move_number {
+                settled(&app);
+            }
+        });
+    });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// A released window snaps to the other when their facing edges are close.
+fn settled(app: &AppHandle) {
+    let shell = app.state::<Shell>();
+    let Some(which) = shell.with(|d| d.last_moved.take()) else {
+        return;
+    };
+    let Some(gauge) = app.get_webview_window(GAUGE) else {
+        return;
+    };
+    let main = app
+        .get_webview_window(MAIN)
+        .filter(|main| main.is_visible().unwrap_or(false));
+    let gauge_shown = gauge.is_visible().unwrap_or(false);
+    if let Some(main) = main.filter(|_| gauge_shown && shell.with(|d| d.docked.is_none()))
+        && let (Some(gauge_rect), Some(main_rect)) = (rect(&gauge), rect(&main))
+    {
+        let reach = (REACH * gauge.scale_factor().unwrap_or(1.0)) as i32;
+        if let Some(side) = dock::snap(main_rect, gauge_rect, reach) {
+            if which == MAIN {
+                let (x, y) = dock::main_beside(gauge_rect, main_rect.width, side);
+                place(app, MAIN, x, y);
+            } else {
+                let (x, y) = dock::gauge_beside(main_rect, gauge_rect.width, side);
+                place(app, GAUGE, x, y);
+            }
+            shell.with(|d| d.docked = Some(side));
+        }
+    }
+    // Where the gauge is now, for next time.
+    if gauge_shown && let Ok(at) = gauge.outer_position() {
+        dock::save_place(&paths::data_dir(), (at.x, at.y));
+    }
+}
 
-    #[test]
-    fn the_gauge_place_is_remembered() {
-        let dir = tempfile::tempdir().unwrap();
-        assert_eq!(load_place(dir.path()), None);
-        save_place(dir.path(), (1740, 48));
-        assert_eq!(load_place(dir.path()), Some((1740, 48)));
-        std::fs::write(dir.path().join(PLACES), "not json").unwrap();
-        assert_eq!(load_place(dir.path()), None);
+/// Move a window, remembering that the move is Vario's own.
+fn place(app: &AppHandle, label: &str, x: i32, y: i32) {
+    let Some(window) = app.get_webview_window(label) else {
+        return;
+    };
+    app.state::<Shell>().with(|d| match label {
+        GAUGE => d.placed_gauge = Some((x, y)),
+        _ => d.placed_main = Some((x, y)),
+    });
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+/// A window's outer rectangle on the desktop, in physical pixels.
+fn rect(window: &WebviewWindow) -> Option<Rect> {
+    let at = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    Some(Rect {
+        x: at.x,
+        y: at.y,
+        width: size.width as i32,
+        height: size.height as i32,
+    })
+}
+
+/// The usable area of the window's screen, in physical pixels.
+fn screen(window: &WebviewWindow) -> Option<Rect> {
+    let monitor = window.current_monitor().ok()??;
+    let area = monitor.work_area();
+    Some(Rect {
+        x: area.position.x,
+        y: area.position.y,
+        width: area.size.width as i32,
+        height: area.size.height as i32,
+    })
+}
+
+/// Whether a point a little inside a window placed at (x, y) is on one of the screens.
+fn on_a_screen(window: &WebviewWindow, x: i32, y: i32) -> bool {
+    window.available_monitors().is_ok_and(|monitors| {
+        monitors.iter().any(|monitor| {
+            let (at, size) = (monitor.position(), monitor.size());
+            Rect {
+                x: at.x,
+                y: at.y,
+                width: size.width as i32,
+                height: size.height as i32,
+            }
+            .contains(x + 8, y + 8)
+        })
+    })
+}
+
+/// On screen without taking the focus from the agent's application on macOS, where
+/// Tauri's own `show` makes the window key.
+fn put_on_screen(gauge: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    macos::set_on_screen(gauge, true);
+    #[cfg(not(target_os = "macos"))]
+    let _ = gauge.show();
+}
+
+/// Show the gauge over the agents' applications only. macOS only; elsewhere the gauge
+/// stays above every window.
+pub fn follow_agent_apps(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::Arc;
+        use vario_core::gauge::{FOLLOW_EVERY, Follow};
+        let follow = Arc::new(Mutex::new(Follow::default()));
+        thread::spawn(move || {
+            loop {
+                thread::sleep(FOLLOW_EVERY);
+                let follow = Arc::clone(&follow);
+                let handle = app.clone();
+                // AppKit wants its windows and the workspace on the main thread.
+                let _ = app.run_on_main_thread(move || {
+                    let (Some(gauge), Some(front)) =
+                        (handle.get_webview_window(GAUGE), macos::front())
+                    else {
+                        return;
+                    };
+                    let shown = follow.lock().map(|mut follow| follow.step(&front));
+                    if let Ok(Some(shown)) = shown {
+                        macos::set_on_screen(&gauge, shown);
+                    }
+                });
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)] // one pointer cast, see below; the crate otherwise denies unsafe
+mod macos {
+    use objc2_app_kit::{NSRunningApplication, NSWindow, NSWindowCollectionBehavior, NSWorkspace};
+    use tauri::WebviewWindow;
+    use vario_core::gauge::Front;
+
+    /// Shown on every Space and over full-screen apps, like the Slint gauge.
+    pub fn join_every_space(gauge: &WebviewWindow) {
+        with_ns_window(gauge, |window| {
+            window.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
+            );
+        });
+    }
+
+    /// On screen or away, without taking the focus and without closing the window.
+    pub fn set_on_screen(gauge: &WebviewWindow, shown: bool) {
+        with_ns_window(gauge, |window| {
+            if shown {
+                window.orderFrontRegardless();
+            } else {
+                window.orderOut(None);
+            }
+        });
+    }
+
+    /// The application in front, from the main thread.
+    pub fn front() -> Option<Front> {
+        let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+        let pid = app.processIdentifier();
+        if pid == NSRunningApplication::currentApplication().processIdentifier() {
+            return Some(Front::Vario);
+        }
+        let bundle = app.bundleIdentifier().map(|b| b.to_string());
+        Some(Front::App { pid, bundle })
+    }
+
+    fn with_ns_window(gauge: &WebviewWindow, job: impl FnOnce(&NSWindow)) {
+        let Ok(pointer) = gauge.ns_window() else {
+            return;
+        };
+        // SAFETY: Tauri hands out the NSWindow of a window it owns and keeps alive while
+        // `gauge` is borrowed; callers run on the main thread.
+        if let Some(window) = unsafe { pointer.cast::<NSWindow>().as_ref() } {
+            job(window);
+        }
     }
 }

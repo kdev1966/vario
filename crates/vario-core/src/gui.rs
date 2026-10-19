@@ -11,17 +11,10 @@ use crate::choices::Choices;
 use crate::clients::Env;
 use crate::hooks;
 
-/// The interfaces, the one tried first first: the Tauri one while it is tried out
-/// beside the Slint one (`vario-gui`).
-const PROGRAMS: [&str; 2] = ["vario-gauge-tauri", "vario-gui"];
-
 /// The interface installed next to `vario` (the same folder, or `Vario.app`).
 pub fn program(env: &Env) -> Option<PathBuf> {
-    let dir = env.exe.parent()?;
-    PROGRAMS
-        .iter()
-        .map(|name| dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)))
-        .find(|path| path.is_file())
+    let name = format!("vario-gui{}", std::env::consts::EXE_SUFFIX);
+    Some(env.exe.parent()?.join(name)).filter(|path| path.is_file())
 }
 
 /// Whether a window can be shown: not over SSH, and on Linux and BSD only with a
@@ -125,17 +118,5 @@ mod tests {
             .join(format!("vario-gui{}", std::env::consts::EXE_SUFFIX));
         std::fs::write(&gui, "").unwrap();
         assert_eq!(program(&env), Some(gui));
-    }
-
-    #[test]
-    fn the_tauri_interface_comes_first_when_installed() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut env = env(&[]);
-        env.exe = dir.path().join("vario");
-        let suffix = std::env::consts::EXE_SUFFIX;
-        std::fs::write(dir.path().join(format!("vario-gui{suffix}")), "").unwrap();
-        let tauri = dir.path().join(format!("vario-gauge-tauri{suffix}"));
-        std::fs::write(&tauri, "").unwrap();
-        assert_eq!(program(&env), Some(tauri));
     }
 }

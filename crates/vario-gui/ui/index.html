@@ -89,6 +89,8 @@ const FR = {
   "MODEL": "MODÈLE", "tokens out": "jetons sortis", "INPUT": "ENTRÉE", "7 DAYS": "7 JOURS",
   "COST": "COÛT", "Delegate more": "Renforcé", "Alert": "Alerte", "Limit": "Limite atteinte",
   "DELEGATED": "DÉLÉGUÉ", "ESCALATED": "ESCALADES", "open Vario ↗": "ouvrir Vario ↗",
+  "Normal": "Normal", "SESSION": "SESSION", "THERMOSTAT": "THERMOSTAT", "CACHE": "CACHE",
+  "QUOTA 5 H": "QUOTA 5 H",
 };
 
 // The needle meter's geometry: the pivot sits below the face, like a VU meter.
@@ -131,13 +133,13 @@ function drawSegments() {
   }
 }
 
-const STATES = [["Normal", "#47c08a"], ["Delegate more", "#e3a23b"], ["Alert", "#ec7d32"], ["Limit", "#e2553f"]];
+const STATES = ["#47c08a", "#e3a23b", "#ec7d32", "#e2553f"];
 function drawThermostat() {
-  STATES.forEach(([label], index) => {
+  [t("Normal"), t("Delegate more"), t("Alert"), t("Limit")].forEach((label, index) => {
     const row = document.createElement("div");
     row.className = "row abs";
     row.style.top = `${20 + index * 15}px`;
-    row.innerHTML = `<span class="lamp"></span><span>${t(label)}</span>`;
+    row.innerHTML = `<span class="lamp"></span><span>${escape(label)}</span>`;
     $("thermostat").append(row);
   });
 }
@@ -178,7 +180,7 @@ function show(r) {
       : segment >= 13 ? "var(--red)" : segment >= 8 ? "var(--amber)" : "var(--green)";
   });
 
-  $("session-caption").textContent = r.other ? "SESSION" : "THERMOSTAT";
+  $("session-caption").textContent = r.other ? t("SESSION") : t("THERMOSTAT");
   $("thermostat").hidden = r.other;
   $("session").hidden = !r.other;
   $("cache").textContent = r.cache;
@@ -186,7 +188,7 @@ function show(r) {
   document.querySelectorAll("#thermostat .row").forEach((row, index) => {
     const lit = r.level === index;
     row.classList.toggle("lit", lit);
-    const lamp = row.querySelector(".lamp"), color = STATES[index][1];
+    const lamp = row.querySelector(".lamp"), color = STATES[index];
     lamp.style.background = lit ? color : "var(--unlit)";
     lamp.style.boxShadow = lit ? `0 0 6px ${color}` : "none";
   });

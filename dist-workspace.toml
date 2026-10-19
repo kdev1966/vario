@@ -22,12 +22,9 @@ global-artifacts-jobs = ["./build-macos-app"]
 # Both READMEs go into each archive
 include = ["README.fr.md"]
 
-# The interface (Slint) needs these to build on Linux, as in ci.yml.
+# The interface (Tauri) needs these to build on Linux, as in ci.yml.
 [dist.dependencies.apt]
-libfontconfig1-dev = "*"
-libxkbcommon-dev = "*"
-libxkbcommon-x11-dev = "*"
-libx11-xcb-dev = "*"
-libxcursor-dev = "*"
-libwayland-dev = "*"
-libdbus-1-dev = "*"
+libwebkit2gtk-4.1-dev = "*"
+libxdo-dev = "*"
+libssl-dev = "*"
+librsvg2-dev = "*"

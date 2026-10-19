@@ -3,36 +3,25 @@ name = "vario-gui"
 description = "Vario's graphical interface: install, check and follow the delegations without a terminal."
 version.workspace = true
 edition.workspace = true
-# Slint 1.18 needs Rust 1.92; the core and the command line keep the workspace's 1.89.
-rust-version = "1.92"
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme.workspace = true
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-# The winit integration (unstable, hence the ~1.18 pin) makes the gauge a floating
-# system window: its level, its taskbar entry, the macOS activation policy.
-slint = { version = "~1.18", features = ["unstable-winit-030"] }
+# The private API gives a transparent window on macOS: only the rounded panel shows.
+tauri = { version = "2", features = ["macos-private-api"] }
 vario-core = { path = "../vario-core" }
 
-# macOS: the gauge joins every Space (NSWindow.collectionBehavior), which winit does
-# not offer. The versions are the ones Slint already builds.
+# macOS: every Space, and putting the gauge on screen without taking the focus.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 
-[dev-dependencies]
-# Runs the window without a screen, so the tests can drive it.
-i-slint-backend-testing = "1.18"
-tempfile = "3"
-
 [build-dependencies]
-slint-build = "1.18"
+tauri-build = { version = "2", features = [] }
 
-# Not the workspace's `forbid`: the code Slint generates allows unsafe locally, which
-# `forbid` refuses. `deny` still keeps unsafe out of this crate's own code.
+# Not the workspace's `forbid`: the one pointer cast to NSWindow needs a local allow.
 [lints.rust]
 unsafe_code = "deny"
