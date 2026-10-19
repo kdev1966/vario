@@ -1,0 +1,12 @@
+{
+  "identifier": "default",
+  "description": "The gauge and the main window: their commands, and dragging them by their panel.",
+  "windows": [
+    "gauge",
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging"
+  ]
+}

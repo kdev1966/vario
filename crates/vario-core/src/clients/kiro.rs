@@ -9,7 +9,10 @@
 //! Hooks carry only `cwd`; no model, session ID or tokens are in the payload, so the
 //! gauge shows the client name alone (mode `other`, no `usage`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
@@ -199,13 +202,38 @@ impl Part for KiroSetDefault {
             // kiro-cli not found on PATH: trust the JSON marker alone.
             return true;
         };
-        std::process::Command::new(kiro)
-            .args(["agent", "list"])
-            .output()
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
+        agent_list(kiro)
             .is_some_and(|out| out.lines().any(|l| l.contains('*') && l.contains("vario")))
     }
+}
+
+/// `kiro-cli agent list` takes over a second, and one look at the clients reads it three
+/// times (detection, install check, status): its output is kept this long.
+const AGENT_LIST_FOR: Duration = Duration::from_secs(2);
+
+/// The last `agent list` output, with the program that gave it and when.
+type AgentList = Option<(PathBuf, Instant, Option<String>)>;
+static AGENT_LIST: Mutex<AgentList> = Mutex::new(None);
+
+/// What `kiro agent list` prints, read again only once the last reading is stale.
+fn agent_list(kiro: &Path) -> Option<String> {
+    // Held while the command runs: a concurrent look waits, then reuses the output.
+    let mut cached = AGENT_LIST
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((program, at, out)) = cached.as_ref()
+        && program == kiro
+        && at.elapsed() < AGENT_LIST_FOR
+    {
+        return out.clone();
+    }
+    let out = Command::new(kiro)
+        .args(["agent", "list"])
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok());
+    *cached = Some((kiro.to_path_buf(), Instant::now(), out.clone()));
+    out
 }
 
 /// The `kiro-cli` next to `vario`, else `kiro-cli` or `q` on the `PATH` that `env` gives.

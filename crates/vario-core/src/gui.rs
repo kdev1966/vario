@@ -1,7 +1,7 @@
 //! Opening Vario's interface from a hook: the floating gauge comes up with each
 //! agent's session.
 //!
-//! The interface runs a single instance. A second `vario-gui` only asks the running
+//! The interface runs a single instance. A second run only asks the running
 //! one to show its gauge, then leaves, so a hook can start it every time.
 
 use std::path::{Path, PathBuf};

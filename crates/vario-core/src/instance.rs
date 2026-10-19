@@ -42,7 +42,8 @@ pub fn claim(data_dir: &Path) -> Option<Instance> {
     else {
         return Some(Instance { _lock: None });
     };
-    match file.try_lock() {
+    let locked = file.try_lock();
+    match locked {
         Ok(()) => {
             // Requests left by an earlier run are stale.
             let _ = fs::remove_file(data_dir.join(REQUESTS));

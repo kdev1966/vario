@@ -42,7 +42,7 @@ The hooks note every delegation to Vario's sub-agents in a local journal; `vario
 
 Claude Code runs status lines in the terminal only: the quota is read while you use Claude Code in a terminal, not from the VS Code extension. The rest (sub-agents, guidance, journal, `vario usage`) works everywhere.
 
-**Floating gauge.** `vario-gui --gauge`, or **Floating gauge** in the application, opens a slim (156 px), dark, floating and borderless system window drawn like an audio plugin, narrow enough to sit beside your editor: above other applications, on every desktop (and over full-screen apps on macOS), with no Dock icon or taskbar entry in `--gauge` mode. It shows a needle meter for the 5-hour quota, a row of lit segments for the 7-day quota, the thermostat's state as lamps, and knobs for the share delegated and the escalation rate. Drag it from anywhere.
+**Floating gauge.** `vario-gui --gauge`, or **Floating gauge** in the application, opens a slim (156 px), dark, floating and borderless system window drawn like an audio plugin, narrow enough to sit beside your editor: above other windows, on every desktop (and over full-screen apps on macOS), with no Dock icon or taskbar entry in `--gauge` mode. On macOS it follows the agents' applications: it shows while VS Code, Cursor or a terminal (Terminal, iTerm2, Tabby, Warp, Ghostty) is in front, and steps away behind any other application. It shows a needle meter for the 5-hour quota, a row of lit segments for the 7-day quota, the thermostat's state as lamps, and knobs for the share delegated and the escalation rate. Drag it from anywhere.
 
 It opens by itself when an agent's session starts, in every client whose hooks Vario installed (all but Gemini CLI), and stays up when the agent closes; untick **Open the gauge with each agent** on the **Install** page to open it only when you ask. Where a client exposes a prompt-submit hook, the gauge switches to that client as soon as you submit a prompt; otherwise it follows the last client to report activity. Merely selecting another chat tab without submitting a prompt may not trigger a switch. It comes back where you left it, else in the top right corner of the screen. Only one runs: opening it again, or opening the application, brings up the running one. Its **open Vario** link opens the main window beside it. Released close to each other, the two windows snap together, tops aligned; dragging the gauge then brings the main window along, and dragging the main window away undocks it. Closing the main window leaves the gauge up.
 
@@ -61,7 +61,7 @@ It opens by itself when an agent's session starts, in every client whose hooks V
   ```
 - **Application on Linux and Windows**: the same way with `vario-gui-installer.sh` or `vario-gui-installer.ps1`.
 
-**From source** (Rust 1.88 or later for the command, 1.92 for the application):
+**From source** (Rust 1.89 or later; on Linux the application also needs WebKitGTK: `sudo apt install libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev` on Debian and Ubuntu):
 
 ```sh
 cargo install --git https://github.com/kdev1966/vario vario
@@ -115,8 +115,8 @@ cargo run -p vario -- doctor
 cargo run -p vario-gui
 ```
 
-The workspace has three crates: `vario-core` (all the logic), `vario` (the command) and `vario-gui` (the application, built with [Slint](https://slint.dev)). The design and the roadmap are in [vario-document-de-conception.md](vario-document-de-conception.md), in French.
+The workspace has three crates: `vario-core` (all the logic), `vario` (the command) and `vario-gui` (the application, built with [Tauri](https://tauri.app): its windows are drawn by the system's web view, from the pages in `crates/vario-gui/ui/`). The design and the roadmap are in [vario-document-de-conception.md](vario-document-de-conception.md), in French.
 
 ## License
 
-MIT. The application is built with [Slint](https://slint.dev) under its royalty-free license, which its **About** tab acknowledges.
+MIT. The application is built with [Tauri](https://tauri.app) (MIT or Apache-2.0).

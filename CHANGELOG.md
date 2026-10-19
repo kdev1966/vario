@@ -33,6 +33,14 @@ All notable changes to Vario are listed here. The format follows
 
 ### Changed
 
+- The application is drawn with Tauri (the system's web view) instead of Slint, with
+  the same windows, pages and looks. On Linux it now needs WebKitGTK
+  (`libwebkit2gtk-4.1-dev`) to build. The main window opens at once: it is prepared
+  hidden when the interface starts.
+- On macOS, the gauge shows only while an agent's application is in front (VS Code,
+  Cursor, Terminal, iTerm2, Tabby, Warp, Ghostty) and steps away behind the others.
+- Vario.app has an icon.
+- The command line and the core need Rust 1.89 (was 1.88).
 - The main window has the gauge's look: a dark, frameless panel the height of the
   gauge, with a card of lamps per client and a channel of knobs per sub-agent.
   Closing it leaves the gauge up; on macOS its Dock icon shows only while it is open.
@@ -43,6 +51,8 @@ All notable changes to Vario are listed here. The format follows
 
 ### Fixed
 
+- Looking at the clients took about 4 s on a machine with Kiro CLI, which answered the
+  same `kiro-cli agent list` three times; it is now asked once (about 1.4 s).
 - In Claude Code's VS Code extension, where the status line never runs, the gauge
   kept showing the last other client (Copilot's model) while Claude Code was in use.
   Claude Code's prompt hook now takes the gauge back.

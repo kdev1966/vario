@@ -1,0 +1,347 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vario</title>
+<!-- Vario's main window: the same dark front panel as the gauge, wider, the height of
+     the gauge so the two can sit side by side as one device. All logic lives in
+     vario-core (vario_core::panel); this page only lays out what it gives. -->
+<link rel="stylesheet" href="theme.css">
+<style>
+  html, body { width: 640px; height: 494px; }
+  #panel { width: 640px; height: 494px; }
+  #logo { left: 12px; top: 9px; }
+  #pages { left: 84px; top: 8px; display: flex; gap: 4px; }
+  .page-key { height: 24px; padding: 6px 9px 0; border-radius: 5px; color: var(--muted);
+    font-size: 9px; font-weight: 700; letter-spacing: 0.8px; cursor: pointer;
+    border: 1px solid transparent; }
+  .page-key:hover { background: var(--plate); }
+  .page-key.active { background: var(--key); border-color: var(--edge); color: var(--amber); }
+  #gauge-key { left: 488px; top: 7px; width: 116px; }
+  #close { left: 614px; top: 12px; }
+  #rule { left: 12px; top: 40px; width: 616px; height: 1px; background: var(--edge); }
+  .page { left: 12px; top: 50px; width: 616px; height: 432px; }
+  .intro { left: 0; top: 0; width: 616px; color: var(--muted); font-size: 11px; line-height: 1.3; }
+  .keys { display: flex; gap: 8px; align-items: center; }
+
+  /* Status */
+  #cards { left: 0; top: 0; width: 616px; display: grid; grid-template-columns: 1fr 1fr;
+    gap: 8px; }
+  .card { position: relative; height: 84px; }
+  .card .name { position: absolute; left: 10px; top: 8px; font-size: 12px; font-weight: 700; }
+  .card .handoff { position: absolute; right: 8px; top: 6px; width: 62px; display: flex;
+    gap: 3px; align-items: center; }
+  .card .lamps { position: absolute; left: 4px; top: 32px; display: flex; }
+  .indicator { width: 64px; text-align: center; }
+  .indicator .caption { margin-top: 3px; }
+  .card .notes { position: absolute; left: 10px; top: 62px; right: 10px; color: var(--amber);
+    font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #display { left: 0; width: 616px; height: 84px; background: #101114; padding: 10px; }
+  #status-message { font-size: 12px; font-weight: 700; }
+  #handoff-hint { margin-top: 6px; color: var(--muted); font-size: 10px; }
+  #confirm { left: 0; top: 0; width: 616px; height: 432px; background: #000000a0;
+    border-radius: 7px; }
+  #confirm .plate { position: absolute; left: 98px; top: 96px; width: 420px; height: 150px;
+    background: var(--panel-top); padding: 14px 16px; }
+  #confirm h1 { font-size: 13px; font-weight: 700; }
+  #confirm p { margin-top: 8px; height: 54px; color: var(--muted); font-size: 11px; }
+
+  /* Install */
+  #clients { left: 0; top: 40px; width: 236px; height: 330px; padding: 12px; }
+  #clients > * + * { margin-top: 8px; }
+  .toggle { display: flex; gap: 9px; align-items: center; font-size: 11px; cursor: pointer; }
+  .toggle .switch { flex: none; position: relative; width: 30px; height: 16px;
+    border-radius: 8px; background: var(--unlit); border: 1px solid var(--edge); }
+  .toggle .switch::after { content: ""; position: absolute; left: 1px; top: 1px; width: 12px;
+    height: 12px; border-radius: 6px; background: var(--text); transition: left 120ms ease-out; }
+  .toggle.on .switch { background: #7a5520; border-color: var(--amber); }
+  .toggle.on .switch::after { left: 15px; }
+  .check { display: flex; gap: 8px; align-items: center; height: 22px; font-size: 12px; }
+  .check .box { width: 16px; height: 16px; border-radius: 4px; background: var(--key);
+    border: 1px solid var(--edge); color: var(--amber); font-size: 11px; font-weight: 800;
+    text-align: center; line-height: 14px; }
+  .check.on .box { border-color: var(--amber); }
+  .check.off { color: var(--muted); }
+  .check.off .box { color: var(--muted); border-color: var(--edge); }
+  .check.enabled { cursor: pointer; }
+  #changes { left: 248px; top: 40px; width: 368px; height: 330px; }
+  #planned { left: 6px; top: 26px; width: 356px; height: 298px; overflow-y: auto; }
+  #planned div { height: 20px; line-height: 20px; padding: 0 6px; font-size: 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #install-message { color: var(--amber); font-size: 10px; white-space: pre-line; }
+
+  /* Delegations */
+  #period { left: 0; top: 40px; font-size: 12px; font-weight: 700; }
+  #channels { left: 0; top: 68px; width: 616px; display: grid;
+    grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .channel { position: relative; height: 196px; text-align: center; }
+  .channel .agent { position: absolute; left: 0; right: 0; top: 10px; color: var(--amber);
+    font-size: 9px; }
+  .channel .count { position: absolute; left: 0; right: 0; top: 24px; font-size: 28px;
+    font-weight: 800; }
+  .channel .label { position: absolute; left: 0; right: 0; top: 64px; }
+  .channel .figure { position: absolute; top: 166px; width: 60px; color: var(--muted);
+    font-size: 10px; }
+  #journal { left: 0; top: 280px; width: 616px; color: var(--muted); font-size: 10px;
+    overflow-wrap: anywhere; }
+
+  /* About */
+  #about-logo { left: 4px; top: 6px; font-size: 40px; }
+  #about-text { left: 6px; top: 92px; width: 300px; font-size: 12px; line-height: 1.35; }
+  #toolkit { left: 330px; top: 6px; width: 286px; height: 220px; padding: 16px;
+    color: var(--muted); font-size: 11px; line-height: 1.4; }
+  #toolkit b { display: block; color: var(--text); font-size: 13px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div id="panel" class="abs panel"></div>
+<div id="logo" class="abs logo">Vario</div>
+<div id="pages" class="abs"></div>
+<button id="gauge-key" class="abs key" data-t="Floating gauge"></button>
+<div id="close" class="abs close click">×</div>
+<div id="rule" class="abs"></div>
+
+<!-- Status: one card per client, a display for the message, and the keys. -->
+<section id="page-0" class="abs page">
+  <div id="cards" class="abs"></div>
+  <div id="display" class="abs plate">
+    <div id="status-message">…</div>
+    <div id="handoff-hint"></div>
+  </div>
+  <div id="status-keys" class="abs keys">
+    <button class="key" data-t="Refresh" data-do="refresh"></button>
+    <button id="repair" class="key" data-t="Repair"></button>
+    <button id="remove" class="key" data-t="Remove Vario…"></button>
+  </div>
+  <!-- Removing asks first, over the page. -->
+  <div id="confirm" class="abs" hidden>
+    <div class="plate">
+      <h1 data-t="Remove Vario from every client?"></h1>
+      <p data-t="Vario's sub-agents, instructions and hooks are removed; every file is backed up first, and a new install brings them back."></p>
+      <div class="keys">
+        <button id="remove-yes" class="key primary" data-t="Remove"></button>
+        <button id="remove-no" class="key" data-t="Cancel"></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Install: the clients and settings on the left, the planned changes on the right. -->
+<section id="page-1" class="abs page" hidden>
+  <div class="abs intro" data-t="Vario adds economical sub-agents and delegation guidance to your AI clients. Nothing changes before you see the changes and apply them."></div>
+  <div id="clients" class="abs plate">
+    <div class="caption" data-t="CLIENTS"></div>
+    <label id="manual" class="toggle"><span class="switch"></span><span data-t="Manual mode: choose the clients one by one"></span></label>
+    <div id="no-client" style="color:var(--muted);font-size:11px" data-t="No supported AI client was found on this machine." hidden></div>
+    <div id="choices"></div>
+    <div class="caption" style="margin-top:14px" data-t="GAUGE"></div>
+    <label id="gauge-with-sessions" class="toggle"><span class="switch"></span><span data-t="Open the gauge with each agent"></span></label>
+  </div>
+  <div id="changes" class="abs plate">
+    <div class="abs caption" style="left:12px;top:10px" data-t="PLANNED CHANGES"></div>
+    <div id="nothing-planned" class="abs" style="left:12px;top:30px;width:340px;color:var(--muted);font-size:11px" data-t="See the changes first: nothing is written before you apply them."></div>
+    <div id="planned" class="abs list"></div>
+  </div>
+  <div class="abs keys" style="left:0;top:380px;width:616px">
+    <button id="preview" class="key" data-t="See the changes"></button>
+    <button id="apply" class="key primary" data-t="Apply" disabled></button>
+    <div id="install-message"></div>
+  </div>
+</section>
+
+<!-- Delegations: one channel per sub-agent, and the total. -->
+<section id="page-2" class="abs page" hidden>
+  <div class="abs intro" data-t="Each time one of Vario's sub-agents finishes, its report is noted locally. Escalations and missing report footers show where delegation falls short."></div>
+  <div id="period" class="abs"></div>
+  <div id="channels" class="abs"></div>
+  <div id="journal" class="abs"></div>
+  <div class="abs keys" style="left:0;top:380px">
+    <button class="key" data-t="Refresh" data-do="refresh"></button>
+  </div>
+</section>
+
+<!-- About. -->
+<section id="page-3" class="abs page" hidden>
+  <div id="about-logo" class="abs logo">Vario</div>
+  <div id="version" class="abs caption" style="left:6px;top:64px"></div>
+  <div id="about-text" class="abs" data-t="Routes the simple tasks of your AI agents to cheaper models, through their own sub-agents. Local: Vario sends nothing to anyone. MIT licence."></div>
+  <div id="toolkit" class="abs plate"><b>Tauri</b><span data-t="Drawn by the system's web view, through Tauri."></span></div>
+</section>
+
+<script src="common.js"></script>
+<script>
+const FR = {
+  "AGENTS": "AGENTS", "GUIDANCE": "CONSIGNES", "HOOKS": "HOOKS", "QUOTA": "QUOTA",
+  "DELEGATIONS": "DÉLÉGATIONS", "ESCALATED": "ESCALADES", "NO FOOTER": "SANS PIED",
+  "STATUS": "ÉTAT", "INSTALL": "INSTALLATION", "ABOUT": "À PROPOS",
+  "Floating gauge": "Jauge flottante", "Refresh": "Actualiser", "Repair": "Réparer",
+  "Remove Vario…": "Retirer Vario…", "Remove Vario from every client?": "Retirer Vario de tous les clients ?",
+  "Vario's sub-agents, instructions and hooks are removed; every file is backed up first, and a new install brings them back.":
+    "Les sous-agents, consignes et hooks de Vario sont retirés ; chaque fichier est sauvegardé avant, et une nouvelle installation les remet en place.",
+  "Remove": "Retirer", "Cancel": "Annuler",
+  "Vario adds economical sub-agents and delegation guidance to your AI clients. Nothing changes before you see the changes and apply them.":
+    "Vario ajoute à vos clients IA des sous-agents économiques et des consignes de délégation. Rien ne change avant que vous ayez vu les changements et cliqué sur Appliquer.",
+  "CLIENTS": "CLIENTS", "Manual mode: choose the clients one by one": "Mode manuel : choisir les clients un par un",
+  "No supported AI client was found on this machine.": "Aucun client IA compatible n'a été trouvé sur cette machine.",
+  "GAUGE": "JAUGE", "Open the gauge with each agent": "Ouvrir la jauge avec chaque agent",
+  "PLANNED CHANGES": "CHANGEMENTS PRÉVUS",
+  "See the changes first: nothing is written before you apply them.": "Voyez d'abord les changements : rien n'est écrit avant que vous les appliquiez.",
+  "See the changes": "Voir les changements", "Apply": "Appliquer",
+  "Each time one of Vario's sub-agents finishes, its report is noted locally. Escalations and missing report footers show where delegation falls short.":
+    "Chaque fois qu'un sous-agent de Vario termine, son compte rendu est noté sur cette machine. Les escalades et les pieds de page manquants montrent où la délégation atteint ses limites.",
+  "VERSION": "VERSION",
+  "Routes the simple tasks of your AI agents to cheaper models, through their own sub-agents. Local: Vario sends nothing to anyone. MIT licence.":
+    "Confie les tâches simples de vos agents IA à des modèles moins chers, grâce à leurs propres sous-agents. Local : Vario n'envoie rien à personne. Licence MIT.",
+  "Drawn by the system's web view, through Tauri.": "Dessinée par le moteur web du système, avec Tauri.",
+};
+
+let manual = false;
+
+// The pages, with the open one lit.
+const PAGES = 4;
+function openPage(index) {
+  $("confirm").hidden = true;
+  [...Array(PAGES).keys()].forEach((i) => {
+    $(`page-${i}`).hidden = i !== index;
+    $("pages").children[i].classList.toggle("active", i === index);
+  });
+}
+
+// Status: a lamp per kind of setup, 1 in place, 0 missing, -1 not offered.
+function lamp(state, on = "var(--green)", off = "var(--red)") {
+  const color = state > 0 ? on : off;
+  return `<span class="lamp" style="${state >= 0 ? `background:${color};box-shadow:0 0 6px ${color}` : ""}"></span>`;
+}
+function indicator(state, caption) {
+  const color = state < 0 ? "var(--unlit-text)" : "var(--muted)";
+  return `<div class="indicator">${lamp(state)}<div class="caption" style="color:${color}">${escape(caption)}</div></div>`;
+}
+function showStatus(status) {
+  $("cards").innerHTML = status.clients.map((client) => `
+    <div class="card plate">
+      <div class="name">${escape(client.label)}</div>
+      <div class="handoff">${lamp(client.handoff, "var(--green)", "var(--amber)")}
+        <span class="caption" style="color:${client.handoff < 0 ? "var(--unlit-text)" : "var(--muted)"}">HANDOFF</span></div>
+      <div class="lamps">${indicator(client.subagents, t("AGENTS"))}${indicator(client.instructions, t("GUIDANCE"))}${indicator(client.hooks, t("HOOKS"))}${indicator(client.quota, t("QUOTA"))}</div>
+      <div class="notes" title="${escape(client.notes)}">${escape(client.notes)}</div>
+    </div>`).join("");
+  // The display and the keys follow the cards, two per row.
+  const cards = Math.ceil(status.clients.length / 2) * 92;
+  $("display").style.top = `${cards}px`;
+  $("status-keys").style.top = `${cards + 96}px`;
+  $("status-message").textContent = status.message;
+  $("status-message").style.color = status.needs_fix ? "var(--amber)" : "var(--green)";
+  $("handoff-hint").textContent = status.handoff_hint;
+  $("repair").disabled = !status.needs_fix;
+  $("repair").classList.toggle("primary", status.needs_fix);
+  $("gauge-with-sessions").classList.toggle("on", status.gauge_with_sessions);
+}
+
+// Install: the detected clients, ticked; only manual mode lets them be unticked.
+function showChoices(choices) {
+  $("no-client").hidden = choices.length > 0;
+  $("preview").disabled = choices.length === 0;
+  $("choices").innerHTML = choices.map((choice, index) => `
+    <div class="check ${choice.selected ? "on" : ""} ${manual ? "enabled" : "off"}" data-index="${index}">
+      <span class="box">${choice.selected ? "✓" : ""}</span><span>${escape(choice.label)}</span>
+    </div>`).join("");
+}
+function showPlan(plan) {
+  $("planned").innerHTML = plan.planned.map((line) => `<div title="${escape(line)}">${escape(line)}</div>`).join("");
+  $("nothing-planned").hidden = plan.planned.length > 0;
+  $("apply").disabled = !plan.can_apply;
+  $("install-message").textContent = plan.message;
+}
+function clearPlan(message = "") {
+  showPlan({ planned: [], can_apply: false, message });
+}
+
+// Delegations: one channel per sub-agent, and the total.
+function showReport(report) {
+  $("period").textContent = report.period;
+  $("journal").textContent = report.journal;
+  $("channels").innerHTML = "";
+  for (const row of report.rows) {
+    const channel = document.createElement("div");
+    channel.className = "channel plate";
+    channel.innerHTML = `<div class="caption agent">${escape(row.agent)}</div>
+      <div class="count">${row.delegations}</div>
+      <div class="caption label">${escape(t("DELEGATIONS"))}</div>
+      <div class="figure" style="left:calc(50% - 66px)">${row.escalated}</div>
+      <div class="figure" style="left:calc(50% + 6px)">${row.without_footer}</div>`;
+    $("channels").append(channel);
+    // Placed against the card's middle: the page may be hidden, without a width, now.
+    setKnob(knob(channel, "calc(50% - 66px)", 88, t("ESCALATED")), row.escalated_share);
+    setKnob(knob(channel, "calc(50% + 6px)", 88, t("NO FOOTER")), row.without_footer_share);
+  }
+}
+
+// Side by side: the clients' state takes a second or more, the rest shows meanwhile.
+function refresh() {
+  return Promise.all([
+    invoke("status").then(showStatus),
+    invoke("choices").then(showChoices),
+    invoke("report").then(showReport),
+  ]);
+}
+
+async function start() {
+  await translate(FR);
+  $("pages").innerHTML = [t("STATUS"), t("INSTALL"), t("DELEGATIONS"), t("ABOUT")]
+    .map((page) => `<div class="page-key click">${escape(page)}</div>`).join("");
+  [...$("pages").children].forEach((key, index) => key.addEventListener("click", () => openPage(index)));
+  $("version").textContent = `${t("VERSION")} ${await invoke("version")}`;
+  openPage(Number(await invoke("first_page")));
+  // Each time the window comes back: what was read shows at once, then is read again.
+  await listen("shown", () => refresh());
+  await refresh();
+}
+
+for (const key of document.querySelectorAll('[data-do="refresh"]')) key.addEventListener("click", refresh);
+$("gauge-key").addEventListener("click", () => invoke("open_gauge"));
+$("close").addEventListener("click", () => invoke("close_main"));
+$("repair").addEventListener("click", async () => {
+  const message = await invoke("repair");
+  showStatus(await invoke("status"));
+  if (message) $("status-message").textContent = message;
+});
+$("remove").addEventListener("click", () => { $("confirm").hidden = false; });
+$("remove-no").addEventListener("click", () => { $("confirm").hidden = true; });
+$("remove-yes").addEventListener("click", async () => {
+  $("confirm").hidden = true;
+  const message = await invoke("remove_all");
+  showStatus(await invoke("status"));
+  $("status-message").textContent = message;
+});
+$("manual").addEventListener("click", async (event) => {
+  event.preventDefault();
+  manual = !manual;
+  $("manual").classList.toggle("on", manual);
+  showChoices(await invoke("reset_candidates"));
+  clearPlan();
+});
+$("choices").addEventListener("click", async (event) => {
+  const check = event.target.closest(".check");
+  if (!manual || !check) return;
+  const index = Number(check.dataset.index);
+  showChoices(await invoke("toggle", { index, checked: !check.classList.contains("on") }));
+  // The plan no longer matches the ticks.
+  showPlan({ planned: [], can_apply: false, message: $("install-message").textContent });
+});
+$("gauge-with-sessions").addEventListener("click", (event) => {
+  event.preventDefault();
+  const on = !$("gauge-with-sessions").classList.contains("on");
+  $("gauge-with-sessions").classList.toggle("on", on);
+  invoke("set_gauge_with_sessions", { on });
+});
+$("preview").addEventListener("click", async () => showPlan(await invoke("preview")));
+$("apply").addEventListener("click", async () => {
+  const message = await invoke("apply");
+  clearPlan(message);
+  showStatus(await invoke("status"));
+});
+
+start();
+</script>
+</body>
+</html>
