@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The gauge: its readings, and dragging it by its panel.",
+  "windows": ["gauge"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}

@@ -159,14 +159,16 @@ pub(crate) fn open_gauge(
     let gauge = GaugeWindow::new()?;
     select_translation(lang);
     let usage_cache = vario_core::quota::usage_cache(&env);
-    gauge::Reading::read(
-        &data_dir,
-        &usage_cache,
-        lang,
-        None,
-        vario_core::quota::now(),
-    )
-    .show(&gauge);
+    gauge::show(
+        &vario_core::gauge::Reading::read(
+            &data_dir,
+            &usage_cache,
+            lang,
+            None,
+            vario_core::quota::now(),
+        ),
+        &gauge,
+    );
     gauge::feed(&gauge, env, data_dir, lang);
     Ok(gauge)
 }

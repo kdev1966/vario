@@ -1,0 +1,286 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vario</title>
+<!-- The floating gauge, drawn by the web view: the same slim channel strip as the Slint
+     one (crates/vario-gui/ui/gauge.slint), same sizes and colours. Values below 0 mean
+     "not known yet". -->
+<style>
+  :root {
+    --panel-top: #1e1f25; --panel-bottom: #121317; --plate: #17181d; --edge: #2d2f38;
+    --text: #e9eaef; --muted: #8a8d99; --amber: #e3a23b; --red: #e2553f;
+    --green: #47c08a; --unlit: #25262e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* A floating widget: only the rounded panel shows, the window itself is clear. */
+  html, body { background: transparent; overflow: hidden; width: 156px; height: 494px;
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif; color: var(--text);
+    user-select: none; -webkit-user-select: none; cursor: default; }
+  .abs { position: absolute; }
+  #panel { left: 0; top: 0; width: 156px; height: 494px; border-radius: 14px;
+    background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+    border: 1px solid var(--edge); }
+  .plate { border-radius: 7px; background: var(--plate); border: 1px solid var(--edge);
+    overflow: hidden; }
+  .caption { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: 0.8px; }
+  #logo { left: 12px; top: 9px; color: var(--amber); font-size: 17px; font-weight: 800;
+    font-style: italic; }
+  #close { left: 130px; top: 10px; width: 16px; height: 16px; border-radius: 8px;
+    background: #2a2b33; font-size: 11px; line-height: 16px; text-align: center; }
+  #close:hover { background: var(--red); }
+  #face-light { left: 3px; top: 3px; width: 126px; border-radius: 5px;
+    background: radial-gradient(circle, #2c2d36 0%, #17181d 85%); }
+  #needle { left: 65px; top: 24px; width: 2px; height: 80px; background: #f1f2f6;
+    transform-origin: 1px 80px; transition: transform 700ms ease-out; }
+  #needle::before { content: ""; position: absolute; left: 0; top: 0; width: 2px;
+    height: 14px; background: var(--red); }
+  .stale #needle, .stale #needle::before { background: var(--muted); }
+  #pivot { left: 0; top: 90px; width: 132px; height: 22px; text-align: center;
+    background: linear-gradient(180deg, #1d1e24, #121317); padding-top: 6px; }
+  #glass { left: 3px; top: 3px; width: 126px; height: 44px; border-radius: 5px;
+    background: linear-gradient(180deg, #ffffff14, #ffffff00); }
+  #model { left: 8px; width: 116px; text-align: center; font-weight: 700;
+    overflow-wrap: anywhere; }
+  .lamp { width: 9px; height: 9px; border-radius: 50%; background: var(--unlit); }
+  .row { left: 10px; width: 114px; height: 13px; font-size: 10px; color: var(--muted);
+    display: flex; align-items: center; gap: 7px; }
+  .row.lit { color: var(--text); font-weight: 700; }
+  .knob { width: 60px; height: 74px; }
+  .cap { left: 13px; top: 13px; width: 34px; height: 34px; border-radius: 17px;
+    background: radial-gradient(circle, #3a3c46 0%, #24252c 70%, #1b1c22 100%);
+    border: 1px solid #0d0e11; font-size: 10px; font-weight: 700; line-height: 32px;
+    text-align: center; }
+  #footer { left: 12px; top: 428px; width: 132px; height: 22px; border-radius: 5px;
+    background: #1b1c22; border: 1px solid var(--edge); font-size: 9px; color: var(--muted);
+    display: flex; align-items: center; justify-content: center; white-space: pre;
+    text-align: center; line-height: 1.05; }
+  #footer:hover { background: #2a2b34; }
+  #open { left: 0; top: 456px; width: 156px; height: 18px; text-align: center;
+    color: var(--amber); font-size: 9px; font-weight: 700; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="panel" class="abs"></div>
+<div id="logo" class="abs">Vario</div>
+<div id="close" class="abs click">×</div>
+
+<!-- The face: a needle meter for the 5-hour quota, or the model in use. -->
+<div id="face" class="abs plate" style="left:12px;top:36px;width:132px">
+  <div id="face-light" class="abs"></div>
+  <div id="model-caption" class="abs caption" style="left:8px;top:8px" data-t="MODEL"></div>
+  <div id="model" class="abs"></div>
+  <div id="meter">
+    <svg class="abs" style="left:0;top:0" width="132" height="112" viewBox="0 0 132 112" id="scale"></svg>
+    <div id="needle" class="abs"></div>
+    <div id="pivot" class="abs caption" data-t="QUOTA 5 H"></div>
+    <div id="glass" class="abs"></div>
+  </div>
+</div>
+
+<!-- The digital readout: the 5-hour quota, or the tokens the model has written. -->
+<div class="details abs" id="readout" style="left:0;top:152px;width:156px;text-align:center;font-size:24px;font-weight:800"></div>
+<div class="details abs" id="readout-sub" style="left:0;top:186px;width:156px;text-align:center;font-size:9px;color:var(--muted)"></div>
+
+<!-- The 7-day quota as lit segments, or the tokens the model has read. -->
+<div class="details abs plate" style="left:12px;top:204px;width:132px;height:42px">
+  <div id="seven-caption" class="abs caption" style="left:8px;top:5px"></div>
+  <div id="seven" class="abs" style="right:8px;top:3px;font-weight:700"></div>
+  <div id="segments" class="abs" style="left:8px;top:22px"></div>
+</div>
+
+<!-- The thermostat (one lamp per state), or the cache and the cost. -->
+<div class="details abs plate" style="left:12px;top:254px;width:132px;height:84px">
+  <div id="session-caption" class="abs caption" style="left:8px;top:5px"></div>
+  <div id="thermostat"></div>
+  <div id="session">
+    <div class="row abs" style="top:28px"><span data-t="CACHE"></span><b id="cache" style="margin-left:auto;margin-right:2px;font-size:12px;color:var(--text)"></b></div>
+    <div class="row abs" style="top:52px"><span data-t="COST"></span><b id="cost" style="margin-left:auto;margin-right:2px;font-size:12px;color:var(--amber)"></b></div>
+  </div>
+</div>
+
+<!-- The knobs. -->
+<div id="knobs"></div>
+
+<!-- Footer: when the quota was seen; a click opens the main window. -->
+<div id="footer" class="abs click"></div>
+<div id="open" class="abs click" data-t="open Vario ↗"></div>
+
+<script>
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+const { getCurrentWindow } = window.__TAURI__.window;
+
+const FR = {
+  "MODEL": "MODÈLE", "tokens out": "jetons sortis", "INPUT": "ENTRÉE", "7 DAYS": "7 JOURS",
+  "COST": "COÛT", "Delegate more": "Renforcé", "Alert": "Alerte", "Limit": "Limite atteinte",
+  "DELEGATED": "DÉLÉGUÉ", "ESCALATED": "ESCALADES", "open Vario ↗": "ouvrir Vario ↗",
+};
+let fr = false;
+const t = (text) => (fr && FR[text]) || text;
+const $ = (id) => document.getElementById(id);
+const percent = (value) => value < 0 ? "—" : Math.round(value) + " %";
+const svg = (tag, attrs) => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  return node;
+};
+const rad = (deg) => deg * Math.PI / 180;
+
+// The needle meter's geometry: the pivot sits below the face, like a VU meter.
+const CX = 66, CY = 104, R = 76, START = -50, SWEEP = 100;
+const at = (share, r = R) => {
+  const angle = rad(START + SWEEP * share);
+  return [CX + r * Math.sin(angle), CY - r * Math.cos(angle)];
+};
+
+function drawScale() {
+  const scale = $("scale");
+  // Zones: neutral, amber from 50 %, red from 80 %.
+  for (const [from, to, color] of [[0, 50, "#6f7280"], [50, 80, "#c58b30"], [80, 100, "#d24c38"]]) {
+    const [x0, y0] = at(from / 100), [x1, y1] = at(to / 100);
+    scale.append(svg("path", { d: `M${x0} ${y0} A${R} ${R} 0 0 1 ${x1} ${y1}`,
+      stroke: color, "stroke-width": 3, fill: "none" }));
+  }
+  // Graduations every 10 %, longer every 50 %.
+  for (let tick = 0; tick <= 10; tick++) {
+    const long = tick % 5 === 0;
+    const [x0, y0] = at(tick / 10, long ? R - 11 : R - 7), [x1, y1] = at(tick / 10, R - 2);
+    scale.append(svg("line", { x1: x0, y1: y0, x2: x1, y2: y1,
+      stroke: tick >= 8 ? "#d24c38" : "#c9cbd4", "stroke-width": long ? 1.6 : 1 }));
+  }
+  for (const mark of [0, 50, 100]) {
+    const [x, y] = at(mark / 100, 52);
+    const text = svg("text", { x, y: y + 3, fill: "#b9bbc6", "font-size": 8,
+      "font-weight": 700, "text-anchor": "middle" });
+    text.textContent = mark;
+    scale.append(text);
+  }
+}
+
+function drawSegments() {
+  for (let segment = 0; segment < 16; segment++) {
+    const node = document.createElement("div");
+    node.className = "abs segment";
+    node.style.cssText = `left:${segment * 7.25}px;top:0;width:5.5px;height:12px;border-radius:1px`;
+    $("segments").append(node);
+  }
+}
+
+const STATES = [["Normal", "#47c08a"], ["Delegate more", "#e3a23b"], ["Alert", "#ec7d32"], ["Limit", "#e2553f"]];
+function drawThermostat() {
+  STATES.forEach(([label], index) => {
+    const row = document.createElement("div");
+    row.className = "row abs";
+    row.style.top = `${20 + index * 15}px`;
+    row.innerHTML = `<span class="lamp"></span><span>${t(label)}</span>`;
+    $("thermostat").append(row);
+  });
+}
+
+// A small knob: an amber arc over 270 degrees, the value inside, the caption below.
+function knob(left, caption) {
+  const node = document.createElement("div");
+  node.className = "abs knob";
+  node.style.cssText = `left:${left}px;top:344px`;
+  node.innerHTML = `<svg class="abs" width="60" height="60" viewBox="0 0 60 60">
+      <path d="${arc(-135, 135)}" stroke="var(--unlit)" stroke-width="4" fill="none"/>
+      <path class="value" stroke="var(--amber)" stroke-width="4" fill="none"/></svg>
+    <div class="abs cap"></div>
+    <div class="abs caption" style="left:0;top:62px;width:60px;text-align:center">${t(caption)}</div>`;
+  $("knobs").append(node);
+  return node;
+}
+function arc(from, to) {
+  const r = 22, p = (deg) => [30 + r * Math.sin(rad(deg)), 30 - r * Math.cos(rad(deg))];
+  const [x0, y0] = p(from), [x1, y1] = p(to);
+  return `M${x0} ${y0} A${r} ${r} 0 ${to - from > 180 ? 1 : 0} 1 ${x1} ${y1}`;
+}
+function setKnob(node, value) {
+  const path = node.querySelector(".value");
+  const share = Math.min(Math.max(value, 0), 100) / 100;
+  path.setAttribute("d", value > 0.5 ? arc(-135, -135 + 270 * share) : "");
+  node.querySelector(".cap").textContent = percent(value);
+}
+
+let knobs;
+function show(r) {
+  // The quota's plates, or a client that reports its usage; a client without usage
+  // shows its model alone.
+  const details = !r.other || r.usage;
+  const alone = r.other && !r.usage;
+  document.body.classList.toggle("stale", r.stale);
+  for (const node of document.querySelectorAll(".details")) node.hidden = !details;
+
+  $("face").style.height = alone ? "302px" : "112px";
+  $("face-light").style.height = alone ? "296px" : "106px";
+  $("model-caption").hidden = !r.other;
+  $("model").hidden = !r.other;
+  $("model").textContent = r.model;
+  $("model").style.top = alone ? "120px" : "26px";
+  $("model").style.fontSize = alone ? "18px" : "13px";
+  $("meter").hidden = r.other;
+  $("needle").style.transform = `rotate(${START + SWEEP * Math.min(Math.max(r.five_hour, 0), 100) / 100}deg)`;
+
+  const readout = $("readout");
+  readout.textContent = r.other ? r.output : percent(r.five_hour);
+  readout.style.color = r.other ? "var(--text)" : r.stale ? "var(--muted)"
+    : r.five_hour >= 80 ? "var(--red)" : r.five_hour >= 50 ? "var(--amber)" : "var(--text)";
+  $("readout-sub").textContent = r.other ? t("tokens out") : r.five_hour_reset;
+
+  $("seven-caption").textContent = r.other ? t("INPUT") : t("7 DAYS");
+  $("seven").textContent = r.other ? r.input : percent(r.seven_day);
+  $("seven").style.fontSize = r.other ? "12px" : "9px";
+  $("seven").style.color = r.stale ? "var(--muted)" : "var(--text)";
+  $("segments").hidden = r.other;
+  document.querySelectorAll(".segment").forEach((node, segment) => {
+    const lit = r.seven_day >= 0 && (segment + 0.5) * 100 / 16 <= r.seven_day;
+    node.style.background = !lit ? "var(--unlit)" : r.stale ? "var(--muted)"
+      : segment >= 13 ? "var(--red)" : segment >= 8 ? "var(--amber)" : "var(--green)";
+  });
+
+  $("session-caption").textContent = r.other ? "SESSION" : "THERMOSTAT";
+  $("thermostat").hidden = r.other;
+  $("session").hidden = !r.other;
+  $("cache").textContent = r.cache;
+  $("cost").textContent = r.cost;
+  document.querySelectorAll("#thermostat .row").forEach((row, index) => {
+    const lit = r.level === index;
+    row.classList.toggle("lit", lit);
+    const lamp = row.querySelector(".lamp"), color = STATES[index][1];
+    lamp.style.background = lit ? color : "var(--unlit)";
+    lamp.style.boxShadow = lit ? `0 0 6px ${color}` : "none";
+  });
+
+  setKnob(knobs[0], r.delegated);
+  setKnob(knobs[1], r.escalated);
+
+  const footer = $("footer");
+  footer.textContent = r.other ? r.client : r.updated;
+  footer.style.color = r.other ? "var(--text)" : r.stale ? "var(--amber)" : "var(--muted)";
+  footer.style.fontSize = r.other || r.stale ? "8px" : "9px";
+}
+
+async function start() {
+  fr = (await invoke("ui_lang")) === "fr";
+  for (const node of document.querySelectorAll("[data-t]")) node.textContent = t(node.dataset.t);
+  drawScale();
+  drawSegments();
+  drawThermostat();
+  knobs = [knob(14, "DELEGATED"), knob(82, "ESCALATED")];
+  show(await invoke("reading"));
+  await listen("reading", (event) => show(event.payload));
+}
+
+// The gauge is dragged from anywhere but its buttons.
+document.addEventListener("mousedown", (event) => {
+  if (event.button === 0 && !event.target.closest(".click")) getCurrentWindow().startDragging();
+});
+$("close").addEventListener("click", () => invoke("close_gauge"));
+for (const id of ["footer", "open"]) $(id).addEventListener("click", () => invoke("open_main"));
+
+start();
+</script>
+</body>
+</html>

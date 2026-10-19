@@ -1,15 +1,14 @@
 //! The floating gauge: its readings, and the thread that refreshes them without ever
 //! blocking the window (measuring the logs takes a fraction of a second).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use vario_core::active::Active;
 use vario_core::clients::Env;
+use vario_core::gauge::{FOLLOW_EVERY, Follow, Reading};
 use vario_core::lang::Lang;
-use vario_core::quota::{self, Level, Quota};
-use vario_core::{report, tr, usage};
+use vario_core::{quota, usage};
 
 use slint::ComponentHandle;
 
@@ -20,220 +19,24 @@ const QUOTA_EVERY: Duration = Duration::from_secs(5);
 /// The logs are measured this often.
 const USAGE_EVERY: Duration = Duration::from_secs(60);
 
-/// What the gauge shows; values below 0 are not known yet.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Reading {
-    pub five_hour: f32,
-    pub five_hour_reset: String,
-    pub seven_day: f32,
-    pub level: i32,
-    pub delegated: f32,
-    pub escalated: f32,
-    pub updated: String,
-    /// The quota was seen too long ago to be the quota of the moment.
-    pub stale: bool,
-    /// The client in use is not Claude Code, which alone has a quota: show its model
-    /// (and its usage when the client reports any) instead of the quota.
-    pub other: bool,
-    /// The active client reported tokens or a cost; without them, show the model alone.
-    pub usage: bool,
-    /// e.g. "OpenCode · build", or "VS Code (Copilot)".
-    pub client: String,
-    pub model: String,
-    pub output: String,
-    pub input: String,
-    pub cache: String,
-    pub cost: String,
-}
-
-impl Reading {
-    /// Read the quota (the more recent of `data_dir`'s and the `/usage` cache in
-    /// `usage_cache`) and the journal now; `delegated` comes from the last
-    /// measurement of the logs.
-    pub fn read(
-        data_dir: &Path,
-        usage_cache: &Path,
-        lang: Lang,
-        delegated: Option<f64>,
-        now: i64,
-    ) -> Reading {
-        Self::read_with_activity(data_dir, usage_cache, lang, delegated, None, now)
-    }
-
-    fn read_with_activity(
-        data_dir: &Path,
-        usage_cache: &Path,
-        lang: Lang,
-        delegated: Option<f64>,
-        codegeex: Option<Active>,
-        now: i64,
-    ) -> Reading {
-        let quota = Quota::latest(data_dir, usage_cache);
-        // The current window, or the last one seen once it has passed its reset: the
-        // gauge keeps showing the last reading, greyed, instead of going blank.
-        let (live_five, live_seven) = quota
-            .as_ref()
-            .map_or((None, None), |quota| quota.current(now));
-        let five = live_five.or_else(|| quota.as_ref().and_then(|quota| quota.five_hour));
-        let seven = live_seven.or_else(|| quota.as_ref().and_then(|quota| quota.seven_day));
-        let five_hour_reset = match (live_five, five) {
-            (Some(window), _) => {
-                let left = quota::time_left(window.resets_at, now);
-                tr!(lang, "resets in {left}", "remise à zéro dans {left}")
-            }
-            (None, Some(_)) => tr!(lang, "quota expired", "quota expiré"),
-            (None, None) => tr!(lang, "no quota yet", "pas encore de quota"),
-        };
-        // Grey it out when the reading is old, or once the window it shows has expired.
-        let stale = quota.as_ref().is_some_and(|quota| quota.is_stale(now))
-            || (live_five.is_none() && five.is_some())
-            || (live_seven.is_none() && seven.is_some());
-        // The thermostat only advises from a window that is still current.
-        let level = if live_five.is_none() && live_seven.is_none() {
-            -1
-        } else {
-            match quota.as_ref().map(|quota| quota.level(now)) {
-                None | Some(Level::Normal) => 0,
-                Some(Level::Reinforced) => 1,
-                Some(Level::Alert) => 2,
-                Some(Level::Limit) => 3,
-            }
-        };
-        let journal = report::summarize(data_dir).unwrap_or_default();
-        let escalated = (journal.total.delegations > 0)
-            .then(|| journal.total.escalated as f64 * 100.0 / journal.total.delegations as f64);
-        // Short: the gauge is narrow.
-        let updated = match quota.as_ref().map(|quota| quota.captured_at) {
-            // Only Claude Code's status line and `/usage` refresh it.
-            Some(captured) if stale => {
-                let ago = quota::time_left(now, captured);
-                tr!(
-                    lang,
-                    "seen {ago} ago\ntype /usage",
-                    "relevé il y a {ago}\ntapez /usage"
-                )
-            }
-            Some(captured) => {
-                let seen = chrono::DateTime::from_timestamp(captured, 0)
-                    .map(|time| {
-                        time.with_timezone(&chrono::Local)
-                            .format("%H:%M")
-                            .to_string()
-                    })
-                    .unwrap_or_default();
-                tr!(lang, "quota seen at {seen}", "quota relevé à {seen}")
-            }
-            None => tr!(lang, "no quota yet", "pas encore de quota"),
-        };
-        let known = |value: Option<f64>| value.map_or(-1.0, |value| value as f32);
-        // Claude Code only writes the quota while it runs; another client reports its own
-        // session. Show whichever was seen most recently. Claude Code's prompt hook also
-        // records it there, for the VS Code extension, where the status line never runs.
-        let active = match (Active::load(data_dir), codegeex) {
-            (Some(current), Some(codegeex)) if codegeex.at > current.at => Some(codegeex),
-            (Some(current), _) => Some(current),
-            (None, codegeex) => codegeex,
-        };
-        let claude_at = quota.as_ref().map(|quota| quota.captured_at);
-        let other = active.as_ref().is_some_and(|active| {
-            active.client != "claude" && claude_at.is_none_or(|claude| active.at > claude)
-        });
-        // Not every client reports tokens: Copilot's hooks carry none, and the gauge then
-        // shows the model alone where the figures would be.
-        let usage = active.as_ref().is_some_and(|active| {
-            active.output > 0
-                || active.input > 0
-                || active.reasoning > 0
-                || active.cache_read > 0
-                || active.cache_write > 0
-                || active.cost > 0.0
-        });
-        let (client, model, output, input, cache, cost) = match active.as_ref() {
-            Some(active) if other => (
-                match active.agent.is_empty() {
-                    true => display(&active.client).to_string(),
-                    false => format!("{} · {}", display(&active.client), active.agent),
-                },
-                active.label().to_string(),
-                usage::human(active.output),
-                usage::human(active.input),
-                usage::human(active.cache_read),
-                // Copilot bills premium requests, not dollars, and Gemini CLI reports no
-                // cost: theirs is unknown here.
-                match active.client.as_str() {
-                    "vscode" | "gemini" => "—".to_string(),
-                    _ => money(active.cost),
-                },
-            ),
-            _ => Default::default(),
-        };
-        Reading {
-            five_hour: if other {
-                -1.0
-            } else {
-                known(five.map(|window| window.used_percentage))
-            },
-            five_hour_reset,
-            seven_day: if other {
-                -1.0
-            } else {
-                known(seven.map(|window| window.used_percentage))
-            },
-            level: if other { -1 } else { level },
-            delegated: known(delegated),
-            escalated: known(escalated),
-            updated,
-            stale,
-            other,
-            usage,
-            client,
-            model,
-            output,
-            input,
-            cache,
-            cost,
-        }
-    }
-
-    pub fn show(&self, gauge: &GaugeWindow) {
-        gauge.set_five_hour(self.five_hour);
-        gauge.set_five_hour_reset(self.five_hour_reset.clone().into());
-        gauge.set_seven_day(self.seven_day);
-        gauge.set_level(self.level);
-        gauge.set_delegated(self.delegated);
-        gauge.set_escalated(self.escalated);
-        gauge.set_updated(self.updated.clone().into());
-        gauge.set_stale(self.stale);
-        gauge.set_other(self.other);
-        gauge.set_usage(self.usage);
-        gauge.set_client(self.client.clone().into());
-        gauge.set_model(self.model.clone().into());
-        gauge.set_output(self.output.clone().into());
-        gauge.set_input(self.input.clone().into());
-        gauge.set_cache(self.cache.clone().into());
-        gauge.set_cost(self.cost.clone().into());
-    }
-}
-
-/// A cost in dollars, short: the gauge is narrow.
-fn money(cost: f64) -> String {
-    if cost <= 0.0 {
-        "$0.00".into()
-    } else if cost < 0.01 {
-        "<$0.01".into()
-    } else {
-        format!("${cost:.2}")
-    }
-}
-
-/// A client's own label ("VS Code (Copilot)"), else its id as reported.
-fn display(client: &str) -> &str {
-    match client {
-        "codegeex" => "CodeGeeX",
-        _ => vario_core::clients::by_name(client)
-            .map(|integration| integration.label)
-            .unwrap_or(client),
-    }
+/// Put a reading on the gauge window.
+pub fn show(reading: &Reading, gauge: &GaugeWindow) {
+    gauge.set_five_hour(reading.five_hour);
+    gauge.set_five_hour_reset(reading.five_hour_reset.clone().into());
+    gauge.set_seven_day(reading.seven_day);
+    gauge.set_level(reading.level);
+    gauge.set_delegated(reading.delegated);
+    gauge.set_escalated(reading.escalated);
+    gauge.set_updated(reading.updated.clone().into());
+    gauge.set_stale(reading.stale);
+    gauge.set_other(reading.other);
+    gauge.set_usage(reading.usage);
+    gauge.set_client(reading.client.clone().into());
+    gauge.set_model(reading.model.clone().into());
+    gauge.set_output(reading.output.clone().into());
+    gauge.set_input(reading.input.clone().into());
+    gauge.set_cache(reading.cache.clone().into());
+    gauge.set_cost(reading.cost.clone().into());
 }
 
 /// Keep the gauge up to date from a background thread, until the window is gone.
@@ -259,7 +62,7 @@ pub fn feed(gauge: &GaugeWindow, env: Env, data_dir: PathBuf, lang: Lang) {
                 quota::now(),
             );
             if weak
-                .upgrade_in_event_loop(move |gauge| reading.show(&gauge))
+                .upgrade_in_event_loop(move |gauge| show(&reading, &gauge))
                 .is_err()
             {
                 break;
@@ -289,67 +92,6 @@ pub fn float(gauge: &GaugeWindow) {
             macos::set_on_screen(window, true);
         }
     });
-}
-
-/// The applications that run an agent: the gauge shows over them and goes away behind
-/// the others. VS Code (and Insiders), Cursor, and the terminals for the agents' CLIs.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
-const AGENT_APPS: &[&str] = &[
-    "com.microsoft.VSCode",
-    "com.microsoft.VSCodeInsiders",
-    "com.todesktop.230313mzl4w4u92",
-    "com.apple.Terminal",
-    "com.googlecode.iterm2",
-    "org.tabby",
-    "dev.warp.Warp-Stable",
-    "com.mitchellh.ghostty",
-];
-
-/// How often the application in front is checked.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
-pub const FOLLOW_EVERY: Duration = Duration::from_millis(400);
-
-/// The application in front, as the gauge sees it.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Front {
-    /// Vario itself: the gauge or the main window was clicked.
-    Vario,
-    /// Another application, by its process and bundle identifier.
-    App { pid: i32, bundle: Option<String> },
-}
-
-/// Whether the gauge is on screen follows the application in front: it shows when an
-/// agent's application comes forward and goes away when another one does. Only a change
-/// of application counts, so a gauge opened by hand over another application stays up.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
-#[derive(Debug, Default)]
-pub struct Follow {
-    last: Option<i32>,
-    /// Checks seen in a row on an application without an agent, since it came forward.
-    away: u32,
-}
-
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS follows the front application
-impl Follow {
-    /// The gauge's new state for the application now in front, if it changes.
-    pub fn step(&mut self, front: &Front) -> Option<bool> {
-        let Front::App { pid, bundle } = front else {
-            return None;
-        };
-        let agent = bundle.as_deref().is_some_and(|b| AGENT_APPS.contains(&b));
-        if self.last != Some(*pid) {
-            self.last = Some(*pid);
-            self.away = u32::from(!agent);
-            return agent.then_some(true);
-        }
-        // Away for a second check in a row: not just passing through on the way back.
-        if self.away == 1 {
-            self.away = 2;
-            return Some(false);
-        }
-        None
-    }
 }
 
 /// Show the gauge over the agents' applications only, from now on. macOS only; elsewhere
@@ -422,6 +164,7 @@ mod macos {
     };
     use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use slint::winit_030::winit::window::Window;
+    use vario_core::gauge::Front;
 
     pub fn show_in_dock(show: bool) {
         let Some(mtm) = MainThreadMarker::new() else {
@@ -466,14 +209,14 @@ mod macos {
     }
 
     /// The application in front, from the event loop's (main) thread.
-    pub fn front() -> Option<super::Front> {
+    pub fn front() -> Option<Front> {
         let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
         let pid = app.processIdentifier();
         if pid == NSRunningApplication::currentApplication().processIdentifier() {
-            return Some(super::Front::Vario);
+            return Some(Front::Vario);
         }
         let bundle = app.bundleIdentifier().map(|b| b.to_string());
-        Some(super::Front::App { pid, bundle })
+        Some(Front::App { pid, bundle })
     }
 
     fn ns_window(window: &Window) -> Option<Retained<NSWindow>> {
@@ -493,44 +236,6 @@ mod macos {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn app(pid: i32, bundle: &str) -> Front {
-        Front::App {
-            pid,
-            bundle: Some(bundle.to_owned()),
-        }
-    }
-
-    #[test]
-    fn the_gauge_follows_the_agents_application() {
-        let mut follow = Follow::default();
-        assert_eq!(follow.step(&app(1, "com.microsoft.VSCode")), Some(true));
-        assert_eq!(follow.step(&app(1, "com.microsoft.VSCode")), None);
-        // The browser comes forward: the gauge goes away on the second check.
-        assert_eq!(follow.step(&app(2, "com.google.Chrome")), None);
-        assert_eq!(follow.step(&app(2, "com.google.Chrome")), Some(false));
-        assert_eq!(follow.step(&app(2, "com.google.Chrome")), None);
-        assert_eq!(follow.step(&app(3, "org.tabby")), Some(true));
-    }
-
-    #[test]
-    fn passing_through_another_application_keeps_the_gauge() {
-        let mut follow = Follow::default();
-        follow.step(&app(1, "com.googlecode.iterm2"));
-        assert_eq!(follow.step(&app(2, "com.apple.finder")), None);
-        assert_eq!(follow.step(&app(1, "com.googlecode.iterm2")), Some(true));
-    }
-
-    #[test]
-    fn clicking_vario_or_opening_it_over_another_application_keeps_the_gauge() {
-        let mut follow = Follow::default();
-        // Opened by hand over the Finder: no change of application yet.
-        assert_eq!(follow.step(&app(2, "com.apple.finder")), None);
-        follow.step(&app(1, "com.apple.Terminal"));
-        assert_eq!(follow.step(&Front::Vario), None);
-        assert_eq!(follow.step(&Front::Vario), None);
-    }
-
     #[test]
     fn the_window_shows_a_reading() {
         i_slint_backend_testing::init_no_event_loop();
@@ -553,264 +258,12 @@ mod tests {
             cache: String::new(),
             cost: String::new(),
         };
-        reading.show(&gauge);
+        show(&reading, &gauge);
         assert_eq!(gauge.get_five_hour(), 85.0);
         assert_eq!(gauge.get_level(), 2);
         assert_eq!(gauge.get_five_hour_reset(), "resets in 40 min");
         assert_eq!(gauge.get_updated(), "read at 10:00");
         assert!(gauge.get_stale());
         assert!(!gauge.get_other());
-    }
-
-    #[test]
-    fn without_data_everything_is_unknown() {
-        let dir = tempfile::tempdir().unwrap();
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, 1_800_000_000);
-        assert_eq!(reading.five_hour, -1.0);
-        assert_eq!(reading.seven_day, -1.0);
-        assert_eq!(reading.level, -1);
-        assert_eq!(reading.delegated, -1.0);
-        assert_eq!(reading.escalated, -1.0);
-        assert_eq!(reading.five_hour_reset, "no quota yet");
-        assert_eq!(reading.updated, "no quota yet");
-    }
-
-    #[test]
-    fn reads_the_quota_the_level_and_the_journal() {
-        let dir = tempfile::tempdir().unwrap();
-        let now = 1_800_000_000;
-        Quota {
-            captured_at: now - 30,
-            five_hour: Some(quota::Window {
-                used_percentage: 62.4,
-                resets_at: now + 80 * 60,
-            }),
-            seven_day: Some(quota::Window {
-                used_percentage: 41.0,
-                resets_at: now + 86_400,
-            }),
-        }
-        .save(dir.path())
-        .unwrap();
-        let journal = [
-            r#"{"time":"2026-10-16T10:00:00+01:00","agent":"vario-worker","result":"ok","escalate":false}"#,
-            r#"{"time":"2026-10-16T11:00:00+01:00","agent":"vario-worker","result":"stuck","escalate":true}"#,
-        ];
-        std::fs::write(report::journal_path(dir.path()), journal.join("\n")).unwrap();
-
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::Fr, Some(12.0), now);
-        assert_eq!(reading.five_hour, 62.4);
-        assert_eq!(reading.seven_day, 41.0);
-        assert_eq!(
-            reading.level, 1,
-            "62 % of the most used window: delegating more"
-        );
-        assert_eq!(reading.five_hour_reset, "remise à zéro dans 1 h 20");
-        assert_eq!(reading.delegated, 12.0);
-        assert_eq!(reading.escalated, 50.0);
-        assert!(reading.updated.starts_with("quota relevé à"));
-        assert!(!reading.stale);
-    }
-
-    /// A `.claude.json` that does not exist: `/usage` never ran.
-    fn no_cache(dir: &tempfile::TempDir) -> PathBuf {
-        dir.path().join(".claude.json")
-    }
-
-    #[test]
-    fn an_old_reading_says_so_then_expires() {
-        let dir = tempfile::tempdir().unwrap();
-        let now = 1_800_000_000;
-        Quota {
-            captured_at: now - 2 * 3600,
-            five_hour: Some(quota::Window {
-                used_percentage: 13.0,
-                resets_at: now + 14 * 60,
-            }),
-            seven_day: None,
-        }
-        .save(dir.path())
-        .unwrap();
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::Fr, None, now);
-        assert!(reading.stale);
-        assert_eq!(reading.five_hour, 13.0);
-        assert_eq!(reading.updated, "relevé il y a 2 h\ntapez /usage");
-
-        let later = now + 15 * 60;
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, later);
-        assert_eq!(
-            reading.five_hour, 13.0,
-            "the last known value stays, greyed, once the window has expired"
-        );
-        assert!(reading.stale);
-        assert_eq!(reading.five_hour_reset, "quota expired");
-    }
-
-    #[test]
-    fn a_fresher_usage_cache_replaces_the_status_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let now = 1_800_000_000;
-        Quota {
-            captured_at: now - 2 * 3600,
-            five_hour: Some(quota::Window {
-                used_percentage: 13.0,
-                resets_at: now + 14 * 60,
-            }),
-            seven_day: None,
-        }
-        .save(dir.path())
-        .unwrap();
-        let cache = serde_json::json!({"cachedUsageUtilization": {
-            "fetchedAtMs": (now - 60) * 1000,
-            "utilization": {"five_hour": {"utilization": 19, "resets_at": "2027-01-15T08:40:00+00:00"}}
-        }});
-        std::fs::write(no_cache(&dir), cache.to_string()).unwrap();
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, now);
-        assert_eq!(reading.five_hour, 19.0);
-        assert!(!reading.stale);
-        assert_eq!(reading.five_hour_reset, "resets in 40 min");
-    }
-
-    fn quota_at(dir: &tempfile::TempDir, captured: i64) {
-        Quota {
-            captured_at: captured,
-            five_hour: Some(quota::Window {
-                used_percentage: 13.0,
-                resets_at: captured + 3600,
-            }),
-            seven_day: None,
-        }
-        .save(dir.path())
-        .unwrap();
-    }
-
-    fn active_at(dir: &tempfile::TempDir, at: i64) {
-        Active {
-            client: "opencode".into(),
-            model: "deepseek-v4.1-flash-free".into(),
-            agent: "build".into(),
-            output: 32_777,
-            input: 1_081_226,
-            cache_read: 3_509_632,
-            cost: 0.42,
-            at,
-            ..Active::default()
-        }
-        .save(dir.path())
-        .unwrap();
-    }
-
-    #[test]
-    fn the_client_seen_last_takes_the_gauge() {
-        let dir = tempfile::tempdir().unwrap();
-        let now = 1_800_000_000;
-        quota_at(&dir, now - 2 * 3600);
-        active_at(&dir, now - 5);
-
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, now);
-        assert!(reading.other);
-        assert!(reading.usage);
-        assert_eq!(reading.client, "OpenCode · build");
-        assert_eq!(reading.model, "deepseek-v4.1-flash-free");
-        assert_eq!(reading.output, "32.8 k");
-        assert_eq!(reading.input, "1.1 M");
-        assert_eq!(reading.cache, "3.5 M");
-        assert_eq!(reading.cost, "$0.42");
-        assert_eq!(reading.five_hour, -1.0, "the quota steps aside");
-        assert_eq!(reading.level, -1);
-    }
-
-    #[test]
-    fn a_new_codegeex_conversation_takes_the_gauge() {
-        let dir = tempfile::tempdir().unwrap();
-        let now = 1_800_000_000;
-        quota_at(&dir, now - 30);
-        active_at(&dir, now - 5);
-
-        let env = Env {
-            home: dir.path().to_path_buf(),
-            ..Env::default()
-        };
-        let history_path = vario_core::clients::CodeGeeXActivity::storage_path(&env);
-        std::fs::create_dir_all(history_path.parent().unwrap()).unwrap();
-        std::fs::write(
-            history_path,
-            serde_json::json!({
-                "conversation": {
-                    "talkId": "codegeex-session",
-                    "createTime": now * 1000 + 10_000,
-                    "messages": [{"role": "user", "content": "fixture"}]
-                }
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let mut codegeex = vario_core::clients::CodeGeeXActivity::new(&env);
-
-        let reading = Reading::read_with_activity(
-            dir.path(),
-            &no_cache(&dir),
-            Lang::En,
-            None,
-            codegeex.read(),
-            now + 20,
-        );
-        assert!(reading.other);
-        assert!(!reading.usage);
-        assert_eq!(reading.client, "CodeGeeX");
-        assert_eq!(reading.model, "codegeex");
-        assert_eq!(reading.five_hour, -1.0);
-    }
-
-    #[test]
-    fn claude_code_seen_last_shows_the_quota_even_an_old_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let now = 1_800_000_000;
-        quota_at(&dir, now - 2 * 3600);
-        Active {
-            client: "claude".into(),
-            at: now - 5,
-            ..Active::default()
-        }
-        .save(dir.path())
-        .unwrap();
-
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, now);
-        assert!(!reading.other);
-        assert_eq!(reading.model, "");
-    }
-
-    #[test]
-    fn a_fresher_quota_keeps_the_gauge() {
-        let dir = tempfile::tempdir().unwrap();
-        let now = 1_800_000_000;
-        quota_at(&dir, now - 30);
-        active_at(&dir, now - 2 * 3600);
-
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, now);
-        assert!(!reading.other);
-        assert_eq!(reading.five_hour, 13.0);
-        assert_eq!(reading.model, "");
-    }
-
-    #[test]
-    fn a_client_without_usage_shows_its_model_alone() {
-        let dir = tempfile::tempdir().unwrap();
-        let now = 1_800_000_000;
-        quota_at(&dir, now - 2 * 3600);
-        Active {
-            client: "vscode".into(),
-            model: "copilot/auto".into(),
-            at: now - 5,
-            ..Active::default()
-        }
-        .save(dir.path())
-        .unwrap();
-
-        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::Fr, None, now);
-        assert!(reading.other);
-        assert!(!reading.usage, "Copilot reports no tokens");
-        assert_eq!(reading.client, "VS Code (Copilot)");
-        assert_eq!(reading.model, "copilot/auto");
     }
 }
