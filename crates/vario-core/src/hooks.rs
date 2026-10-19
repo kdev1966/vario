@@ -127,7 +127,20 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
         }
         // The quota is Claude Code's subscription; inside Cursor it says nothing.
         Event::PromptSubmit if in_cursor => quiet(via),
-        Event::PromptSubmit => thermostat(env, data_dir).unwrap_or_else(|| quiet(via)),
+        Event::PromptSubmit => {
+            // The status line, which writes the quota, never runs in Claude Code's
+            // VS Code extension: without this, the last other client kept the gauge.
+            if via == Via::Claude {
+                let mut claude = Active::from_report(via.name(), &Map::new(), quota::now());
+                let text = |key: &str| input.get(key).and_then(Value::as_str).unwrap_or_default();
+                claude.directory = text("cwd").to_string();
+                claude.session = text("session_id").to_string();
+                if let Err(err) = claude.save(data_dir) {
+                    log(data_dir, &format!("prompt-submit: {err}"));
+                }
+            }
+            thermostat(env, data_dir).unwrap_or_else(|| quiet(via))
+        }
         // What the gauge shows when this client, not Claude Code, is the active one.
         Event::Activity => {
             let mut report = Active::from_report(via.name(), &input, quota::now());
@@ -682,6 +695,33 @@ mod tests {
         assert_eq!(active.model, "deepseek-v4.1-flash-free");
         assert_eq!(active.output, 32_777);
         assert_eq!(active.cache_read, 3_509_632);
+    }
+
+    #[test]
+    fn a_claude_code_prompt_takes_the_gauge_back() {
+        let dir = tempfile::tempdir().unwrap();
+        Active {
+            client: "vscode".into(),
+            model: "GPT-6 Luna".into(),
+            at: 1,
+            ..Active::default()
+        }
+        .save(dir.path())
+        .unwrap();
+        let input = json!({"cwd": "/work", "session_id": "abc"}).to_string();
+        run(
+            Event::PromptSubmit,
+            Via::Claude,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "claude");
+        assert_eq!(active.model, "");
+        assert_eq!(active.directory, "/work");
+        assert_eq!(active.session, "abc");
+        assert!(active.at > 1);
     }
 
     #[test]

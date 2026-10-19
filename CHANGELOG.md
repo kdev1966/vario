@@ -29,6 +29,9 @@ All notable changes to Vario are listed here. The format follows
 
 ### Fixed
 
+- In Claude Code's VS Code extension, where the status line never runs, the gauge
+  kept showing the last other client (Copilot's model) while Claude Code was in use.
+  Claude Code's prompt hook now takes the gauge back.
 - The interface no longer mixes languages when an agent starts it with another `LANG`
   than the system's (OpenCode with `en_US`): its labels now follow the same language
   as its values.

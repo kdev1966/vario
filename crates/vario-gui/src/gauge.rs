@@ -116,12 +116,13 @@ impl Reading {
         };
         let known = |value: Option<f64>| value.map_or(-1.0, |value| value as f32);
         // Claude Code only writes the quota while it runs; another client reports its own
-        // session. Show whichever was seen most recently.
+        // session. Show whichever was seen most recently. Claude Code's prompt hook also
+        // records it there, for the VS Code extension, where the status line never runs.
         let active = Active::load(data_dir);
         let claude_at = quota.as_ref().map(|quota| quota.captured_at);
-        let other = active
-            .as_ref()
-            .is_some_and(|active| claude_at.is_none_or(|claude| active.at > claude));
+        let other = active.as_ref().is_some_and(|active| {
+            active.client != "claude" && claude_at.is_none_or(|claude| active.at > claude)
+        });
         // Not every client reports tokens: Copilot's hooks carry none, and the gauge then
         // shows the model alone where the figures would be.
         let usage = active.as_ref().is_some_and(|active| {
@@ -537,6 +538,24 @@ mod tests {
         assert_eq!(reading.cost, "$0.42");
         assert_eq!(reading.five_hour, -1.0, "the quota steps aside");
         assert_eq!(reading.level, -1);
+    }
+
+    #[test]
+    fn claude_code_seen_last_shows_the_quota_even_an_old_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = 1_800_000_000;
+        quota_at(&dir, now - 2 * 3600);
+        Active {
+            client: "claude".into(),
+            at: now - 5,
+            ..Active::default()
+        }
+        .save(dir.path())
+        .unwrap();
+
+        let reading = Reading::read(dir.path(), &no_cache(&dir), Lang::En, None, now);
+        assert!(!reading.other);
+        assert_eq!(reading.model, "");
     }
 
     #[test]
