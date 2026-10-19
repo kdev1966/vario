@@ -5,7 +5,7 @@
 pub(crate) mod claude_code;
 mod codex;
 mod cursor;
-mod gemini;
+pub(crate) mod gemini;
 mod opencode;
 pub mod subagents;
 pub(crate) mod vscode;

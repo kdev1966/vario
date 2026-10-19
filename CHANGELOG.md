@@ -43,8 +43,11 @@ All notable changes to Vario are listed here. The format follows
 - The gauge follows the client you are working in. Only Claude Code has a subscription
   quota; when the session in use is another client, the gauge shows that client instead
   of a stale quota. OpenCode reports its model, tokens and cost, so the gauge shows
-  them; Copilot's hooks carry none of that, so the gauge shows the model it reads from
-  VS Code's local chat store, and the client alone when it cannot. Run
+  them. Copilot's and Gemini CLI's hooks carry none of that, so the gauge reads the
+  model and tokens from the session's log (the Copilot agent's `events.jsonl`, Gemini
+  CLI's transcript, through a new `AfterAgent` hook); with VS Code's older built-in
+  chat, it shows the model from VS Code's local chat store. Neither reports a cost in
+  dollars, so the gauge shows none. Run
   `vario doctor --fix` (or **Repair**) to add the reports to an existing setup.
 
 ## [0.2.1] - 2026-10-16

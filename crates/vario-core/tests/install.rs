@@ -768,9 +768,19 @@ fn gemini_install_then_remove() {
             .unwrap()
             .contains(BLOCK_BEGIN)
     );
+    let settings = fs::read_to_string(config.join("settings.json")).unwrap();
+    assert!(settings.contains("\"AfterAgent\""), "{settings}");
+    assert!(
+        settings.contains("hook activity --via gemini"),
+        "{settings}"
+    );
     assert_eq!(
         install::status(&gemini[0], &env),
-        [(Kind::Subagents, true), (Kind::Instructions, true)]
+        [
+            (Kind::Subagents, true),
+            (Kind::Instructions, true),
+            (Kind::Hooks, true)
+        ]
     );
 
     let removed = install::remove(&mut session(dir.path()), &gemini, &env);
@@ -778,9 +788,15 @@ fn gemini_install_then_remove() {
     assert!(!agents.join("vario-reader.md").exists());
     assert!(!agents.join("vario-worker.md").exists());
     assert!(!config.join("GEMINI.md").exists());
+    let settings = fs::read_to_string(config.join("settings.json")).unwrap_or_default();
+    assert!(!settings.contains("vario"), "{settings}");
     assert_eq!(
         install::status(&gemini[0], &env),
-        [(Kind::Subagents, false), (Kind::Instructions, false)]
+        [
+            (Kind::Subagents, false),
+            (Kind::Instructions, false),
+            (Kind::Hooks, false)
+        ]
     );
 
     // GEMINI_CLI_HOME moves the whole .gemini folder.

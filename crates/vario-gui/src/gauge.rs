@@ -142,9 +142,10 @@ impl Reading {
                 usage::human(active.output),
                 usage::human(active.input),
                 usage::human(active.cache_read),
-                // Copilot bills premium requests, not dollars: its cost is unknown here.
+                // Copilot bills premium requests, not dollars, and Gemini CLI reports no
+                // cost: theirs is unknown here.
                 match active.client.as_str() {
-                    "vscode" => "—".to_string(),
+                    "vscode" | "gemini" => "—".to_string(),
                     _ => money(active.cost),
                 },
             ),

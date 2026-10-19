@@ -63,6 +63,7 @@ pub enum Via {
     OpenCode,
     Codex,
     VsCode,
+    Gemini,
 }
 
 impl Via {
@@ -73,6 +74,7 @@ impl Via {
             "opencode" => Some(Via::OpenCode),
             "codex" => Some(Via::Codex),
             "vscode" => Some(Via::VsCode),
+            "gemini" => Some(Via::Gemini),
             _ => None,
         }
     }
@@ -84,6 +86,7 @@ impl Via {
             Via::OpenCode => "opencode",
             Via::Codex => "codex",
             Via::VsCode => "vscode",
+            Via::Gemini => "gemini",
         }
     }
 }
@@ -137,6 +140,12 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
                     report.model =
                         crate::clients::vscode::current_model(env, cwd).unwrap_or_default();
                 }
+            }
+            // Gemini CLI's hooks carry neither; its session transcript has both.
+            if via == Via::Gemini {
+                let cwd = input.get("cwd").and_then(Value::as_str).unwrap_or_default();
+                report.directory = cwd.to_string();
+                crate::clients::gemini::read_session(&input, &mut report);
             }
             if let Err(err) = report.save(data_dir) {
                 log(data_dir, &format!("activity: {err}"));
@@ -214,7 +223,7 @@ fn thermostat(env: &Env, data_dir: &Path) -> Option<String> {
 /// accept nothing.
 fn quiet(via: Via) -> String {
     match via {
-        Via::Cursor | Via::Codex | Via::VsCode => "{}".into(),
+        Via::Cursor | Via::Codex | Via::VsCode | Via::Gemini => "{}".into(),
         Via::Claude | Via::OpenCode => String::new(),
     }
 }
@@ -630,6 +639,7 @@ mod tests {
             (Via::OpenCode, ""),
             (Via::Codex, "{}"),
             (Via::VsCode, "{}"),
+            (Via::Gemini, "{}"),
         ] {
             assert_eq!(
                 run(Event::SessionStart, via, "{}", &env, dir.path()),
