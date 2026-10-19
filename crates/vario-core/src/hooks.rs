@@ -128,11 +128,15 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
         // What the gauge shows when this client, not Claude Code, is the active one.
         Event::Activity => {
             let mut report = Active::from_report(via.name(), &input, quota::now());
-            // Copilot's hooks carry no model; the gauge reads it from VS Code's store.
+            // Copilot's hooks carry no model nor tokens; the gauge reads them from the
+            // Copilot agent's session log, else the model alone from VS Code's store.
             if via == Via::VsCode {
                 let cwd = input.get("cwd").and_then(Value::as_str).unwrap_or_default();
                 report.directory = cwd.to_string();
-                report.model = crate::clients::vscode::current_model(env, cwd).unwrap_or_default();
+                if !crate::clients::vscode::read_session(env, &input, &mut report) {
+                    report.model =
+                        crate::clients::vscode::current_model(env, cwd).unwrap_or_default();
+                }
             }
             if let Err(err) = report.save(data_dir) {
                 log(data_dir, &format!("activity: {err}"));
@@ -668,6 +672,52 @@ mod tests {
         assert_eq!(active.model, "deepseek-v4.1-flash-free");
         assert_eq!(active.output, 32_777);
         assert_eq!(active.cache_read, 3_509_632);
+    }
+
+    #[test]
+    fn the_vscode_activity_hook_reads_the_copilot_session_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.jsonl");
+        let record = |model: &str, input: u64, read: u64, write: u64, output: u64| {
+            json!({"type": "session.usage_record", "data": {"usage": {
+                "model": model, "modelDisplayName": "GPT-6 Luna", "inputTokens": input,
+                "cacheReadTokens": read, "cacheWriteTokens": write, "outputTokens": output,
+                "reasoningTokens": 5, "cost": 1.0
+            }}})
+            .to_string()
+        };
+        let lines = [
+            json!({"type": "session.start", "data": {}}).to_string(),
+            record("gpt-6-luna", 18_000, 7_797, 10_200, 136),
+            "not json".to_string(),
+            record("gpt-6-luna", 19_259, 17_997, 1_259, 28),
+        ];
+        fs::write(&log, lines.join("\n")).unwrap();
+        let input = json!({
+            "sessionId": "2288",
+            "transcriptPath": log,
+            "stopReason": "end_turn",
+            "cwd": "/work"
+        })
+        .to_string();
+        run(
+            Event::Activity,
+            Via::VsCode,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "vscode");
+        assert_eq!(active.model, "GPT-6 Luna");
+        assert_eq!(active.input, 3 + 3, "cached tokens are counted apart");
+        assert_eq!(active.output, 164);
+        assert_eq!(active.reasoning, 10);
+        assert_eq!(active.cache_read, 25_794);
+        assert_eq!(active.cache_write, 11_459);
+        assert_eq!(active.cost, 0.0, "premium requests are not dollars");
+        assert_eq!(active.session, "2288");
+        assert_eq!(active.directory, "/work");
     }
 
     #[test]

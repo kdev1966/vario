@@ -15,6 +15,7 @@ use serde_json::{Map, Value, json};
 
 use super::subagents::{self, MARKER, Subagent, Tier, yaml_string};
 use super::{Env, Integration, has_mcp_server};
+use crate::active::Active;
 use crate::handoff;
 use crate::parts::{JsonHooks, Kind, MarkdownBlock, OwnFile, Part};
 use crate::paths::Os;
@@ -123,6 +124,67 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
         kind: Kind::Hooks,
     }));
     parts
+}
+
+/// The model and token usage of the Copilot session a `Stop` hook reports on, read from
+/// the agent's own event log into `report`.
+///
+/// Recent VS Code runs Copilot on the Copilot CLI agent, which logs each model call as a
+/// `session.usage_record` in `<copilot>/session-state/<session>/events.jsonl`; the hook
+/// names that file (`transcriptPath`) and the session. Tokens add up over the session;
+/// Copilot's `inputTokens` include the cached ones, which are counted apart, as OpenCode
+/// does. Its cost is in premium requests, not dollars, so it is left out. `false` when
+/// there is no such log, as with VS Code's older built-in chat.
+pub fn read_session(env: &Env, input: &Map<String, Value>, report: &mut Active) -> bool {
+    let session = input
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let log = match input.get("transcriptPath").and_then(Value::as_str) {
+        Some(path) => PathBuf::from(path),
+        None if !session.is_empty() => copilot_dir(env)
+            .join("session-state")
+            .join(session)
+            .join("events.jsonl"),
+        None => return false,
+    };
+    let Ok(text) = fs::read_to_string(&log) else {
+        return false;
+    };
+    let mut found = false;
+    for usage in text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|event| event.get("type").and_then(Value::as_str) == Some("session.usage_record"))
+        .filter_map(|event| event.get("data")?.get("usage").cloned())
+    {
+        let count = |key: &str| {
+            usage
+                .get(key)
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+                .max(0.0) as u64
+        };
+        let (cache_read, cache_write) = (count("cacheReadTokens"), count("cacheWriteTokens"));
+        report.input += count("inputTokens").saturating_sub(cache_read + cache_write);
+        report.output += count("outputTokens");
+        report.reasoning += count("reasoningTokens");
+        report.cache_read += cache_read;
+        report.cache_write += cache_write;
+        if let Some(model) = ["modelDisplayName", "model"].iter().find_map(|key| {
+            usage
+                .get(*key)
+                .and_then(Value::as_str)
+                .filter(|m| !m.is_empty())
+        }) {
+            report.model = model.to_string();
+        }
+        found = true;
+    }
+    if found {
+        report.session = session.to_string();
+    }
+    found
 }
 
 /// The model the last Copilot request used, read from VS Code's local chat store.

@@ -142,7 +142,11 @@ impl Reading {
                 usage::human(active.output),
                 usage::human(active.input),
                 usage::human(active.cache_read),
-                money(active.cost),
+                // Copilot bills premium requests, not dollars: its cost is unknown here.
+                match active.client.as_str() {
+                    "vscode" => "—".to_string(),
+                    _ => money(active.cost),
+                },
             ),
             _ => Default::default(),
         };
