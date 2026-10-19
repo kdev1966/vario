@@ -1,6 +1,6 @@
 //! OpenAI Codex CLI: sub-agents in `<home>/agents/*.toml`, the delegation guidance
-//! in `<home>/AGENTS.md`, and a `SubagentStop` hook in `<home>/hooks.json`, for every
-//! project. `<home>` is `$CODEX_HOME`, or `~/.codex`.
+//! in `<home>/AGENTS.md`, and session, prompt-submit and sub-agent hooks in
+//! `<home>/hooks.json`, for every project. `<home>` is `$CODEX_HOME`, or `~/.codex`.
 //!
 //! Codex delegates only when asked to, or when its instructions say so: the guidance
 //! block is what makes it use Vario's sub-agents. Hooks Codex does not manage must be
@@ -105,6 +105,16 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
                         "type": "command",
                         "command": env.hook_command("subagent-stop", "codex"),
                         "timeout": 10,
+                    }],
+                }),
+            ),
+            (
+                "UserPromptSubmit".into(),
+                json!({
+                    "hooks": [{
+                        "type": "command",
+                        "command": env.hook_command("activity", "codex"),
+                        "timeout": 5,
                     }],
                 }),
             ),

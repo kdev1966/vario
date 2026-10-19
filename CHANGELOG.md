@@ -8,6 +8,20 @@ All notable changes to Vario are listed here. The format follows
 
 ### Added
 
+- Kiro CLI support (the closed-source successor to Amazon Q Developer CLI): two agent
+  JSON files in `~/.kiro/cli-agents/` (`vario-reader.json` with `claude-haiku-4.5`,
+  `vario-worker.json` inheriting the session's model), delegation guidance in each
+  agent's `prompt` field, and hooks (`agentSpawn` → gauge, `userPromptSubmit` →
+  active client). Falls back to `~/.aws/amazonq/cli-agents/` when only the Amazon Q
+  CLI path exists. Detected by `kiro-cli`, `q`, `~/.kiro/` or `~/.aws/amazonq/`.
+- The gauge switches to the client you are using as soon as you submit a prompt:
+  prompt hooks for Codex, Cursor, OpenCode and VS Code (Copilot), and a response-end
+  refresh of the usage for OpenCode and Copilot. Selecting another chat without
+  sending a prompt does not switch it. Run `vario doctor --fix` (or **Repair**) to
+  add the new hooks to an existing setup.
+- CodeGeeX in VS Code takes the gauge when a new conversation is saved. Its extension
+  has no hook, so Vario reads its conversation history in VS Code's global storage,
+  read-only, without keeping any prompt or response.
 - The floating gauge opens by itself when an agent's session starts: a session-start
   hook for Claude Code, Codex and VS Code, the OpenCode plugin when OpenCode starts,
   and Cursor's existing hook. It stays up when the agent closes. **Open the gauge

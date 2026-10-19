@@ -183,6 +183,11 @@ export const VarioPlugin = async ({ client, $ }) => {
       // The assistant's reply; its updates carry the running token and cost totals.
       if (event.type === "message.updated") {
         const info = props.info;
+        // Switch as soon as a prompt is submitted, before the assistant replies.
+        if (info?.role === "user" && main.has(info.sessionID)) {
+          await report(info);
+          return;
+        }
         if (info?.role === "assistant" && main.has(info.sessionID)) {
           newest.set(info.sessionID, info);
         }

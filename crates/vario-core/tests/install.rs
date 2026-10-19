@@ -314,8 +314,8 @@ fn cursor_install_then_remove() {
     assert!(outcomes[0].ok());
     assert_eq!(
         outcomes[0].changes.len(),
-        4,
-        "two agents, then hooks.json for each of its two hooks"
+        5,
+        "two agents, then hooks.json for each of its three hooks"
     );
 
     let mut files: Vec<_> = fs::read_dir(&config)
@@ -331,6 +331,7 @@ fn cursor_install_then_remove() {
         serde_json::json!({"version": 1, "hooks": {
             "sessionStart": [{"command": "vario hook session-start --via cursor", "timeout": 10}],
             "subagentStop": [{"command": "vario hook subagent-stop --via cursor", "timeout": 10}],
+            "beforeSubmitPrompt": [{"command": "vario hook activity --via cursor", "timeout": 10}],
         }})
     );
     let mut names: Vec<_> = fs::read_dir(&agents)
@@ -501,6 +502,7 @@ fn opencode_install_then_remove_without_claude_md() {
     assert!(plugin.contains(r#"const AGENTS = ["vario-reader","vario-worker"];"#));
     assert!(plugin.contains("hook session-start --via opencode"));
     assert!(plugin.contains("hook subagent-stop --via opencode"));
+    assert!(plugin.contains("info?.role === \"user\" && main.has(info.sessionID)"));
     assert!(
         plugin.contains(r#".join("\n");"#),
         "the JavaScript escape stays an escape, not a line break inside a string"
@@ -699,6 +701,10 @@ fn codex_install_then_remove() {
         hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"],
         "vario hook session-start --via codex"
     );
+    assert_eq!(
+        hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+        "vario hook activity --via codex"
+    );
 
     assert_eq!(
         install::status(&codex[0], &env),
@@ -869,6 +875,9 @@ fn vscode_install_then_remove() {
             "SubagentStop": [
                 {"type": "command", "command": "vario hook subagent-stop --via vscode", "timeout": 10}
             ],
+            "UserPromptSubmit": [
+                {"type": "command", "command": "vario hook activity --via vscode", "timeout": 5}
+            ],
             "Stop": [
                 {"type": "command", "command": "vario hook activity --via vscode", "timeout": 5}
             ],
@@ -881,6 +890,112 @@ fn vscode_install_then_remove() {
     assert!(!agents.join("vario-worker.agent.md").exists());
     assert!(!copilot.join("copilot-instructions.md").exists());
     assert!(!copilot.join("hooks/vario.json").exists());
+}
+
+#[test]
+fn kiro_install_then_remove() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = fake_env(dir.path());
+    let kiro = vec![by_name("kiro").unwrap()];
+    assert!(!kiro[0].detect(&env));
+
+    // Detected by ~/.kiro
+    let kiro_dir = env.home.join(".kiro").join("agents");
+    fs::create_dir_all(&kiro_dir).unwrap();
+    assert!(kiro[0].detect(&env));
+
+    let outcomes = install::apply(&mut session(dir.path()), &kiro, &env);
+    assert!(outcomes[0].ok(), "{:?}", outcomes[0].errors);
+    assert_eq!(outcomes[0].changes.len(), 3, "vario-reader.json, vario-worker.json, vario.json");
+
+    let agents = kiro_dir.clone();
+    assert_eq!(
+        names_in(&agents),
+        ["vario-reader.json", "vario-worker.json", "vario.json"]
+    );
+
+    let reader: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(agents.join("vario-reader.json")).unwrap())
+            .unwrap();
+    assert_eq!(reader["name"], "vario-reader");
+    assert_eq!(reader["model"], "claude-haiku-4.5");
+    assert!(reader["prompt"].as_str().unwrap().contains("vario-reader"));
+    let allowed = reader["allowedTools"].as_array().unwrap();
+    assert!(!allowed.iter().any(|t| t == "execute_bash"));
+    let spawn_cmd = reader["hooks"]["agentSpawn"][0]["command"].as_str().unwrap();
+    assert!(spawn_cmd.contains("session-start --via kiro"));
+    let prompt_cmd = reader["hooks"]["userPromptSubmit"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(prompt_cmd.contains("activity --via kiro"));
+
+    let worker: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(agents.join("vario-worker.json")).unwrap())
+            .unwrap();
+    assert_eq!(worker["name"], "vario-worker");
+    assert!(
+        worker.get("model").is_none_or(|v| v.is_null()),
+        "worker inherits the session model"
+    );
+    let allowed = worker["allowedTools"].as_array().unwrap();
+    assert!(allowed.iter().any(|t| t == "execute_bash"));
+
+    let main: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(agents.join("vario.json")).unwrap()).unwrap();
+    assert_eq!(main["name"], "vario");
+    assert_eq!(main["_default"], true);
+    let allowed = main["allowedTools"].as_array().unwrap();
+    assert!(allowed.iter().any(|t| t == "execute_bash"));
+    let spawn_cmd = main["hooks"]["agentSpawn"][0]["command"].as_str().unwrap();
+    assert!(spawn_cmd.contains("session-start --via kiro"));
+    assert!(main["prompt"].as_str().unwrap().contains("vario-reader"));
+
+    // KiroSetDefault is Kind::Instructions; without kiro-cli on PATH it is false.
+    assert_eq!(
+        install::status(&kiro[0], &env),
+        [
+            (Kind::Subagents, true),
+            (Kind::Hooks, true),
+            (Kind::Instructions, false)
+        ]
+    );
+
+    let again = install::apply(&mut session(dir.path()), &kiro, &env);
+    assert!(again[0].changes.is_empty(), "a second install changes nothing");
+
+    let removed = install::remove(&mut session(dir.path()), &kiro, &env);
+    assert!(removed[0].ok(), "{:?}", removed[0].errors);
+    assert!(!agents.join("vario-reader.json").exists());
+    assert!(!agents.join("vario-worker.json").exists());
+    assert!(!agents.join("vario.json").exists());
+    assert_eq!(
+        install::status(&kiro[0], &env),
+        [
+            (Kind::Subagents, false),
+            (Kind::Hooks, false),
+            (Kind::Instructions, false)
+        ]
+    );
+}
+
+#[test]
+fn kiro_falls_back_to_amazonq_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = fake_env(dir.path());
+    let kiro = vec![by_name("kiro").unwrap()];
+
+    // Only ~/.aws/amazonq/cli-agents exists, not ~/.kiro/agents
+    let amazonq_dir = env.home.join(".aws").join("amazonq").join("cli-agents");
+    fs::create_dir_all(&amazonq_dir).unwrap();
+    assert!(kiro[0].detect(&env));
+
+    let outcomes = install::apply(&mut session(dir.path()), &kiro, &env);
+    assert!(outcomes[0].ok(), "{:?}", outcomes[0].errors);
+    assert!(
+        amazonq_dir.join("vario-reader.json").exists(),
+        "installs into ~/.aws/amazonq/cli-agents when ~/.kiro/agents is absent"
+    );
+    assert!(!env.home.join(".kiro").exists());
 }
 
 #[cfg(unix)]

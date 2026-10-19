@@ -1,7 +1,7 @@
 //! VS Code with GitHub Copilot: custom agents in `<copilot>/agents/*.agent.md`, the
-//! delegation guidance in `<copilot>/copilot-instructions.md` and a `SubagentStop`
-//! hook in `<copilot>/hooks/vario.json`, for every workspace. `<copilot>` is
-//! `$COPILOT_HOME`, or `~/.copilot`.
+//! delegation guidance in `<copilot>/copilot-instructions.md` and hooks in
+//! `<copilot>/hooks/vario.json`, for every workspace. `<copilot>` is `$COPILOT_HOME`,
+//! or `~/.copilot`.
 //!
 //! VS Code delegates through its `agent` tool set (`runSubagent`), on its own or when
 //! asked; hooks are a preview that `chat.useHooks` turns on. A sub-agent cannot use a
@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::{fs, time::SystemTime};
 
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::subagents::{self, MARKER, Subagent, Tier, yaml_string};
@@ -58,6 +59,81 @@ fn user_dir(env: &Env) -> PathBuf {
             .unwrap_or_else(|| env.home.join(".config"))
             .join("Code")
             .join("User"),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeGeeXConversation {
+    #[serde(default)]
+    talk_id: String,
+    #[serde(default)]
+    create_time: i64,
+    #[serde(default)]
+    messages: Vec<CodeGeeXMessage>,
+}
+
+#[derive(Deserialize)]
+struct CodeGeeXMessage {
+    #[serde(default)]
+    role: String,
+}
+
+/// Reads CodeGeeX's local activity without retaining any prompt or response content.
+/// Its extension exposes no hook, but saves user conversations in VS Code's global
+/// storage with an updated `createTime`.
+pub struct CodeGeeXActivity {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    latest: Option<Active>,
+}
+
+impl CodeGeeXActivity {
+    pub fn new(env: &Env) -> Self {
+        Self {
+            path: Self::storage_path(env),
+            modified: None,
+            latest: None,
+        }
+    }
+
+    pub fn storage_path(env: &Env) -> PathBuf {
+        user_dir(env)
+            .join("globalStorage")
+            .join("aminer.codegeex")
+            .join("agent")
+            .join("history.json")
+    }
+
+    /// Re-read only when CodeGeeX has changed the history file.
+    pub fn read(&mut self) -> Option<Active> {
+        let modified = fs::metadata(&self.path).ok()?.modified().ok()?;
+        if self.modified == Some(modified) {
+            return self.latest.clone();
+        }
+        self.modified = Some(modified);
+        self.latest = fs::File::open(&self.path)
+            .ok()
+            .and_then(|file| {
+                serde_json::from_reader::<
+                        _,
+                        std::collections::HashMap<String, CodeGeeXConversation>,
+                    >(file)
+                    .ok()
+            })
+            .and_then(|history| {
+                history
+                    .into_values()
+                    .filter(|entry| entry.messages.iter().any(|message| message.role == "user"))
+                    .max_by_key(|entry| entry.create_time)
+            })
+            .map(|entry| {
+                let mut report =
+                    Active::from_report("codegeex", &Map::new(), entry.create_time / 1000);
+                report.session = entry.talk_id;
+                report
+            });
+        self.latest.clone()
     }
 }
 
@@ -112,6 +188,14 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
             // Copilot's hooks carry no model nor tokens; this one tells the gauge that
             // Copilot is the client in use, and it reads the model from the local store.
             (
+                "UserPromptSubmit".into(),
+                json!({
+                    "type": "command",
+                    "command": env.hook_command("activity", "vscode"),
+                    "timeout": 5,
+                }),
+            ),
+            (
                 "Stop".into(),
                 json!({
                     "type": "command",
@@ -126,8 +210,8 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
     parts
 }
 
-/// The model and token usage of the Copilot session a `Stop` hook reports on, read from
-/// the agent's own event log into `report`.
+/// The model and token usage of the Copilot session a hook reports on, read from the
+/// agent's own event log into `report`.
 ///
 /// Recent VS Code runs Copilot on the Copilot CLI agent, which logs each model call as a
 /// `session.usage_record` in `<copilot>/session-state/<session>/events.jsonl`; the hook
@@ -136,11 +220,16 @@ fn parts(env: &Env) -> Vec<Box<dyn Part>> {
 /// does. Its cost is in premium requests, not dollars, so it is left out. `false` when
 /// there is no such log, as with VS Code's older built-in chat.
 pub fn read_session(env: &Env, input: &Map<String, Value>, report: &mut Active) -> bool {
-    let session = input
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let log = match input.get("transcriptPath").and_then(Value::as_str) {
+    let field = |camel: &str, snake: &str| {
+        input
+            .get(camel)
+            .or_else(|| input.get(snake))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
+    let session = field("sessionId", "session_id");
+    let transcript = field("transcriptPath", "transcript_path");
+    let log = match (!transcript.is_empty()).then_some(transcript) {
         Some(path) => PathBuf::from(path),
         None if !session.is_empty() => copilot_dir(env)
             .join("session-state")
@@ -318,6 +407,47 @@ mod tests {
         );
         assert_eq!(current_model(&env, "/elsewhere"), None);
         assert_eq!(current_model(&env, ""), None);
+    }
+
+    #[test]
+    fn codegeex_activity_comes_from_the_latest_saved_user_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Env {
+            home: dir.path().to_path_buf(),
+            ..Env::default()
+        };
+        let history = CodeGeeXActivity::storage_path(&env);
+        fs::create_dir_all(history.parent().unwrap()).unwrap();
+        fs::write(
+            &history,
+            json!({
+                "old": {
+                    "talkId": "old",
+                    "createTime": 1_800_000_000_000i64,
+                    "messages": [{"role": "user", "content": "not read"}]
+                },
+                "new": {
+                    "talkId": "new",
+                    "createTime": 1_800_000_001_000i64,
+                    "messages": [{"role": "user", "content": "not read"}]
+                },
+                "empty": {
+                    "talkId": "empty",
+                    "createTime": 1_900_000_000_000i64,
+                    "messages": []
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut activity = CodeGeeXActivity::new(&env);
+        let active = activity.read().unwrap();
+        assert_eq!(active.client, "codegeex");
+        assert_eq!(active.session, "new");
+        assert_eq!(active.at, 1_800_000_001);
+        assert_eq!(active.model, "");
+        assert_eq!(activity.read(), Some(active), "unchanged files are cached");
     }
 
     #[test]

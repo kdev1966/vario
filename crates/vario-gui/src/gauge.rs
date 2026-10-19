@@ -57,6 +57,17 @@ impl Reading {
         delegated: Option<f64>,
         now: i64,
     ) -> Reading {
+        Self::read_with_activity(data_dir, usage_cache, lang, delegated, None, now)
+    }
+
+    fn read_with_activity(
+        data_dir: &Path,
+        usage_cache: &Path,
+        lang: Lang,
+        delegated: Option<f64>,
+        codegeex: Option<Active>,
+        now: i64,
+    ) -> Reading {
         let quota = Quota::latest(data_dir, usage_cache);
         // The current window, or the last one seen once it has passed its reset: the
         // gauge keeps showing the last reading, greyed, instead of going blank.
@@ -118,7 +129,11 @@ impl Reading {
         // Claude Code only writes the quota while it runs; another client reports its own
         // session. Show whichever was seen most recently. Claude Code's prompt hook also
         // records it there, for the VS Code extension, where the status line never runs.
-        let active = Active::load(data_dir);
+        let active = match (Active::load(data_dir), codegeex) {
+            (Some(current), Some(codegeex)) if codegeex.at > current.at => Some(codegeex),
+            (Some(current), _) => Some(current),
+            (None, codegeex) => codegeex,
+        };
         let claude_at = quota.as_ref().map(|quota| quota.captured_at);
         let other = active.as_ref().is_some_and(|active| {
             active.client != "claude" && claude_at.is_none_or(|claude| active.at > claude)
@@ -213,9 +228,12 @@ fn money(cost: f64) -> String {
 
 /// A client's own label ("VS Code (Copilot)"), else its id as reported.
 fn display(client: &str) -> &str {
-    vario_core::clients::by_name(client)
-        .map(|integration| integration.label)
-        .unwrap_or(client)
+    match client {
+        "codegeex" => "CodeGeeX",
+        _ => vario_core::clients::by_name(client)
+            .map(|integration| integration.label)
+            .unwrap_or(client),
+    }
 }
 
 /// Keep the gauge up to date from a background thread, until the window is gone.
@@ -223,6 +241,7 @@ pub fn feed(gauge: &GaugeWindow, env: Env, data_dir: PathBuf, lang: Lang) {
     let weak = gauge.as_weak();
     thread::spawn(move || {
         let usage_cache = quota::usage_cache(&env);
+        let mut codegeex_activity = vario_core::clients::CodeGeeXActivity::new(&env);
         let mut delegated = None;
         let mut measured: Option<Instant> = None;
         loop {
@@ -231,7 +250,14 @@ pub fn feed(gauge: &GaugeWindow, env: Env, data_dir: PathBuf, lang: Lang) {
                 delegated = usage::claude_code(&env, since).delegated_share();
                 measured = Some(Instant::now());
             }
-            let reading = Reading::read(&data_dir, &usage_cache, lang, delegated, quota::now());
+            let reading = Reading::read_with_activity(
+                &data_dir,
+                &usage_cache,
+                lang,
+                delegated,
+                codegeex_activity.read(),
+                quota::now(),
+            );
             if weak
                 .upgrade_in_event_loop(move |gauge| reading.show(&gauge))
                 .is_err()
@@ -538,6 +564,48 @@ mod tests {
         assert_eq!(reading.cost, "$0.42");
         assert_eq!(reading.five_hour, -1.0, "the quota steps aside");
         assert_eq!(reading.level, -1);
+    }
+
+    #[test]
+    fn a_new_codegeex_conversation_takes_the_gauge() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = 1_800_000_000;
+        quota_at(&dir, now - 30);
+        active_at(&dir, now - 5);
+
+        let env = Env {
+            home: dir.path().to_path_buf(),
+            ..Env::default()
+        };
+        let history_path = vario_core::clients::CodeGeeXActivity::storage_path(&env);
+        std::fs::create_dir_all(history_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            history_path,
+            serde_json::json!({
+                "conversation": {
+                    "talkId": "codegeex-session",
+                    "createTime": now * 1000 + 10_000,
+                    "messages": [{"role": "user", "content": "fixture"}]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut codegeex = vario_core::clients::CodeGeeXActivity::new(&env);
+
+        let reading = Reading::read_with_activity(
+            dir.path(),
+            &no_cache(&dir),
+            Lang::En,
+            None,
+            codegeex.read(),
+            now + 20,
+        );
+        assert!(reading.other);
+        assert!(!reading.usage);
+        assert_eq!(reading.client, "CodeGeeX");
+        assert_eq!(reading.model, "codegeex");
+        assert_eq!(reading.five_hour, -1.0);
     }
 
     #[test]

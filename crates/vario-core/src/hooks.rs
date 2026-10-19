@@ -64,6 +64,7 @@ pub enum Via {
     Codex,
     VsCode,
     Gemini,
+    Kiro,
 }
 
 impl Via {
@@ -75,6 +76,7 @@ impl Via {
             "codex" => Some(Via::Codex),
             "vscode" => Some(Via::VsCode),
             "gemini" => Some(Via::Gemini),
+            "kiro" => Some(Via::Kiro),
             _ => None,
         }
     }
@@ -87,6 +89,7 @@ impl Via {
             Via::Codex => "codex",
             Via::VsCode => "vscode",
             Via::Gemini => "gemini",
+            Via::Kiro => "kiro",
         }
     }
 }
@@ -144,6 +147,13 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
         // What the gauge shows when this client, not Claude Code, is the active one.
         Event::Activity => {
             let mut report = Active::from_report(via.name(), &input, quota::now());
+            if via == Via::Kiro {
+                report.directory = input
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+            }
             // Copilot's hooks carry no model nor tokens; the gauge reads them from the
             // Copilot agent's session log, else the model alone from VS Code's store.
             if via == Via::VsCode {
@@ -159,6 +169,33 @@ pub fn run(event: Event, via: Via, input: &str, env: &Env, data_dir: &Path) -> S
                 let cwd = input.get("cwd").and_then(Value::as_str).unwrap_or_default();
                 report.directory = cwd.to_string();
                 crate::clients::gemini::read_session(&input, &mut report);
+            }
+            if via == Via::Codex {
+                let text = |key: &str| input.get(key).and_then(Value::as_str).unwrap_or_default();
+                report.session = text("session_id").to_string();
+                report.directory = text("cwd").to_string();
+                report.agent = text("agent_type").to_string();
+            }
+            if via == Via::Cursor {
+                report.session = input
+                    .get("conversation_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                report.directory = input
+                    .get("workspace_roots")
+                    .and_then(Value::as_array)
+                    .and_then(|roots| roots.first())
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if report.model.is_empty() {
+                    report.model = input
+                        .get("model_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                }
             }
             if let Err(err) = report.save(data_dir) {
                 log(data_dir, &format!("activity: {err}"));
@@ -236,7 +273,7 @@ fn thermostat(env: &Env, data_dir: &Path) -> Option<String> {
 /// accept nothing.
 fn quiet(via: Via) -> String {
     match via {
-        Via::Cursor | Via::Codex | Via::VsCode | Via::Gemini => "{}".into(),
+        Via::Cursor | Via::Codex | Via::VsCode | Via::Gemini | Via::Kiro => "{}".into(),
         Via::Claude | Via::OpenCode => String::new(),
     }
 }
@@ -768,6 +805,94 @@ mod tests {
         assert_eq!(active.cost, 0.0, "premium requests are not dollars");
         assert_eq!(active.session, "2288");
         assert_eq!(active.directory, "/work");
+    }
+
+    #[test]
+    fn the_vscode_prompt_hook_accepts_current_snake_case_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.jsonl");
+        fs::write(
+            &log,
+            json!({"type": "session.usage_record", "data": {"usage": {
+                "modelDisplayName": "GPT-6 Luna", "inputTokens": 4, "outputTokens": 2
+            }}})
+            .to_string(),
+        )
+        .unwrap();
+        let input = json!({
+            "session_id": "current-session",
+            "transcript_path": log,
+            "cwd": "/work"
+        })
+        .to_string();
+
+        run(
+            Event::Activity,
+            Via::VsCode,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "vscode");
+        assert_eq!(active.session, "current-session");
+        assert_eq!(active.model, "GPT-6 Luna");
+        assert_eq!(active.input, 4);
+        assert_eq!(active.output, 2);
+    }
+
+    #[test]
+    fn the_cursor_prompt_hook_records_the_active_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = json!({
+            "conversation_id": "cursor-conversation",
+            "model": "Composer",
+            "model_id": "cursor-composer",
+            "workspace_roots": ["/work"]
+        })
+        .to_string();
+
+        run(
+            Event::Activity,
+            Via::Cursor,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "cursor");
+        assert_eq!(active.session, "cursor-conversation");
+        assert_eq!(active.directory, "/work");
+        assert_eq!(active.model, "Composer");
+    }
+
+    #[test]
+    fn the_codex_prompt_hook_records_the_active_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = json!({
+            "session_id": "codex-session",
+            "cwd": "/work",
+            "agent_type": "default",
+            "model": "gpt-6-luna"
+        })
+        .to_string();
+
+        run(
+            Event::Activity,
+            Via::Codex,
+            &input,
+            &env_in(dir.path()),
+            dir.path(),
+        );
+
+        let active = Active::load(dir.path()).unwrap();
+        assert_eq!(active.client, "codex");
+        assert_eq!(active.session, "codex-session");
+        assert_eq!(active.directory, "/work");
+        assert_eq!(active.agent, "default");
+        assert_eq!(active.model, "gpt-6-luna");
     }
 
     #[test]
