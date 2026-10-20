@@ -416,22 +416,25 @@ mod tests {
         assert_eq!(spawn(&env).len(), 1, "no Delest, no entry");
         let bin = dir.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        std::fs::write(bin.join("delest"), "").unwrap();
+        // `which` looks for the PATHEXT extensions on Windows.
+        let delest = bin.join(if cfg!(windows) {
+            "delest.exe"
+        } else {
+            "delest"
+        });
+        std::fs::write(&delest, "").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(bin.join("delest"), std::fs::Permissions::from_mode(0o755))
-                .unwrap();
+            std::fs::set_permissions(&delest, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         env.vars.insert("PATH".into(), bin.clone().into_os_string());
+        let found = env.which("delest").expect("delest is on the PATH");
         let hooks = spawn(&env);
         assert_eq!(hooks.len(), 2);
         assert_eq!(
             hooks[1]["command"],
-            format!(
-                "{} hook session-start --via kiro",
-                bin.join("delest").display()
-            )
+            format!("{} hook session-start --via kiro", found.display())
         );
         let main: Value = serde_json::from_str(&render_main(&env)).unwrap();
         assert_eq!(main["hooks"]["agentSpawn"].as_array().unwrap().len(), 2);
