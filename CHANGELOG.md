@@ -9,7 +9,7 @@ All notable changes to Vario are listed here. The format follows
 ### Added
 
 - Kiro CLI support (the closed-source successor to Amazon Q Developer CLI): two agent
-  JSON files in `~/.kiro/cli-agents/` (`vario-reader.json` with `claude-haiku-4.5`,
+  JSON files in `~/.kiro/agents/` (`vario-reader.json` with `claude-haiku-4.5`,
   `vario-worker.json` inheriting the session's model), delegation guidance in each
   agent's `prompt` field, and hooks (`agentSpawn` → gauge, `userPromptSubmit` →
   active client). Falls back to `~/.aws/amazonq/cli-agents/` when only the Amazon Q

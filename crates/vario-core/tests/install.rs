@@ -1041,6 +1041,32 @@ fn kiro_falls_back_to_amazonq_dir() {
 
 #[cfg(unix)]
 #[test]
+fn handoff_connected_in_kiro() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = fake_env(dir.path());
+    let kiro = by_name("kiro").unwrap();
+
+    let bin = dir.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let command = bin.join("handoff");
+    fs::write(&command, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o755)).unwrap();
+    env.vars.insert("PATH".into(), OsString::from(&bin));
+    assert_eq!(handoff::state(&kiro, &env), State::NotConnected);
+
+    let settings = env.home.join(".kiro").join("settings");
+    fs::create_dir_all(&settings).unwrap();
+    fs::write(
+        settings.join("mcp.json"),
+        r#"{"mcpServers": {"handoff": {"command": "handoff"}}}"#,
+    )
+    .unwrap();
+    assert_eq!(handoff::state(&kiro, &env), State::Connected);
+}
+
+#[cfg(unix)]
+#[test]
 fn handoff_in_the_new_clients() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();

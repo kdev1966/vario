@@ -1,7 +1,7 @@
 //! Kiro CLI (successor to Amazon Q Developer CLI): one agent JSON file per role in
-//! `<global>/cli-agents/`, the delegation guidance in the agent's `prompt` field, and
+//! `<global>/agents/`, the delegation guidance in the agent's `prompt` field, and
 //! hooks (`agentSpawn`, `userPromptSubmit`) in the same file. `<global>` is
-//! `~/.kiro` (Kiro CLI) or `~/.aws/amazonq` (Amazon Q CLI); both are checked.
+//! `~/.kiro/agents` (Kiro CLI) or `~/.aws/amazonq/cli-agents` (Amazon Q CLI); both are checked.
 //!
 //! Kiro has no sub-agent mechanism in its released format: the reader and worker are
 //! installed as separate agents the user selects with `--agent`. The delegation
@@ -45,13 +45,11 @@ pub fn integration() -> Integration {
         },
         parts,
         handoff_connected: |env| {
-            agent_dirs(env).iter().any(|dir| {
-                has_mcp_server(
-                    &dir.join("vario-worker.json"),
-                    "mcpServers",
-                    handoff::SERVER_NAME,
-                )
-            })
+            has_mcp_server(
+                &env.home.join(".kiro").join("settings").join("mcp.json"),
+                "mcpServers",
+                handoff::SERVER_NAME,
+            )
         },
     }
 }
@@ -231,7 +229,13 @@ fn agent_list(kiro: &Path) -> Option<String> {
         .args(["agent", "list"])
         .output()
         .ok()
-        .and_then(|out| String::from_utf8(out.stdout).ok());
+        .and_then(|out| {
+            // kiro-cli writes to stderr when stdout is not a TTY.
+            let stdout = String::from_utf8(out.stdout).unwrap_or_default();
+            let stderr = String::from_utf8(out.stderr).unwrap_or_default();
+            let text = if stdout.is_empty() { stderr } else { stdout };
+            if text.is_empty() { None } else { Some(text) }
+        });
     *cached = Some((kiro.to_path_buf(), Instant::now(), out.clone()));
     out
 }
@@ -244,6 +248,23 @@ fn kiro_program(env: &Env) -> Option<PathBuf> {
         .filter(|path| path.is_file())
         .or_else(|| env.which("kiro-cli"))
         .or_else(|| env.which("q"))
+}
+
+/// The commands run when a Vario agent starts: Vario's own, then Delest's disk check
+/// when Delest is installed. Kiro runs only the hooks of the selected agent, so
+/// Vario's agents carry Delest's too (`delest hook session-start --via kiro`).
+fn spawn_hooks(env: &Env) -> Value {
+    let mut hooks = vec![json!({ "command": env.hook_command("session-start", "kiro") })];
+    if let Some(delest) = env.which("delest") {
+        let program = delest.to_string_lossy();
+        let program = if program.contains([' ', '"', '\'']) {
+            format!("\"{program}\"")
+        } else {
+            program.into_owned()
+        };
+        hooks.push(json!({ "command": format!("{program} hook session-start --via kiro") }));
+    }
+    Value::Array(hooks)
 }
 
 /// Renders the main `vario.json` agent: all tools, hooks, delegation guidance,
@@ -268,7 +289,7 @@ fn render_main(env: &Env) -> String {
     agent.insert(
         "hooks".into(),
         json!({
-            "agentSpawn": [{ "command": env.hook_command("session-start", "kiro") }],
+            "agentSpawn": spawn_hooks(env),
             "userPromptSubmit": [{ "command": env.hook_command("activity", "kiro") }],
         }),
     );
@@ -301,7 +322,7 @@ fn render(subagent: &Subagent, env: &Env) -> String {
     agent.insert(
         "hooks".into(),
         json!({
-            "agentSpawn": [{ "command": env.hook_command("session-start", "kiro") }],
+            "agentSpawn": spawn_hooks(env),
             "userPromptSubmit": [{ "command": env.hook_command("activity", "kiro") }],
         }),
     );
@@ -381,6 +402,42 @@ mod tests {
         let spawn_cmd = hooks["agentSpawn"][0]["command"].as_str().unwrap();
         assert!(spawn_cmd.contains("session-start"));
         assert!(spawn_cmd.contains("--via kiro"));
+    }
+
+    #[test]
+    fn delest_s_check_joins_the_spawn_hooks_when_delest_is_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = env_with_kiro(dir.path());
+        let all = subagents::all();
+        let spawn = |env: &Env| {
+            let agent: Value = serde_json::from_str(&render(&all[0], env)).unwrap();
+            agent["hooks"]["agentSpawn"].as_array().unwrap().clone()
+        };
+        assert_eq!(spawn(&env).len(), 1, "no Delest, no entry");
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        // `which` looks for the PATHEXT extensions on Windows.
+        let delest = bin.join(if cfg!(windows) {
+            "delest.exe"
+        } else {
+            "delest"
+        });
+        std::fs::write(&delest, "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&delest, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        env.vars.insert("PATH".into(), bin.clone().into_os_string());
+        let found = env.which("delest").expect("delest is on the PATH");
+        let hooks = spawn(&env);
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(
+            hooks[1]["command"],
+            format!("{} hook session-start --via kiro", found.display())
+        );
+        let main: Value = serde_json::from_str(&render_main(&env)).unwrap();
+        assert_eq!(main["hooks"]["agentSpawn"].as_array().unwrap().len(), 2);
     }
 
     #[test]
