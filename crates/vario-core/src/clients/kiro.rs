@@ -250,6 +250,23 @@ fn kiro_program(env: &Env) -> Option<PathBuf> {
         .or_else(|| env.which("q"))
 }
 
+/// The commands run when a Vario agent starts: Vario's own, then Delest's disk check
+/// when Delest is installed. Kiro runs only the hooks of the selected agent, so
+/// Vario's agents carry Delest's too (`delest hook session-start --via kiro`).
+fn spawn_hooks(env: &Env) -> Value {
+    let mut hooks = vec![json!({ "command": env.hook_command("session-start", "kiro") })];
+    if let Some(delest) = env.which("delest") {
+        let program = delest.to_string_lossy();
+        let program = if program.contains([' ', '"', '\'']) {
+            format!("\"{program}\"")
+        } else {
+            program.into_owned()
+        };
+        hooks.push(json!({ "command": format!("{program} hook session-start --via kiro") }));
+    }
+    Value::Array(hooks)
+}
+
 /// Renders the main `vario.json` agent: all tools, hooks, delegation guidance,
 /// and `_default: true` so `doctor` can detect whether it is the active default.
 fn render_main(env: &Env) -> String {
@@ -272,7 +289,7 @@ fn render_main(env: &Env) -> String {
     agent.insert(
         "hooks".into(),
         json!({
-            "agentSpawn": [{ "command": env.hook_command("session-start", "kiro") }],
+            "agentSpawn": spawn_hooks(env),
             "userPromptSubmit": [{ "command": env.hook_command("activity", "kiro") }],
         }),
     );
@@ -305,7 +322,7 @@ fn render(subagent: &Subagent, env: &Env) -> String {
     agent.insert(
         "hooks".into(),
         json!({
-            "agentSpawn": [{ "command": env.hook_command("session-start", "kiro") }],
+            "agentSpawn": spawn_hooks(env),
             "userPromptSubmit": [{ "command": env.hook_command("activity", "kiro") }],
         }),
     );
@@ -385,6 +402,39 @@ mod tests {
         let spawn_cmd = hooks["agentSpawn"][0]["command"].as_str().unwrap();
         assert!(spawn_cmd.contains("session-start"));
         assert!(spawn_cmd.contains("--via kiro"));
+    }
+
+    #[test]
+    fn delest_s_check_joins_the_spawn_hooks_when_delest_is_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = env_with_kiro(dir.path());
+        let all = subagents::all();
+        let spawn = |env: &Env| {
+            let agent: Value = serde_json::from_str(&render(&all[0], env)).unwrap();
+            agent["hooks"]["agentSpawn"].as_array().unwrap().clone()
+        };
+        assert_eq!(spawn(&env).len(), 1, "no Delest, no entry");
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("delest"), "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(bin.join("delest"), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        env.vars.insert("PATH".into(), bin.clone().into_os_string());
+        let hooks = spawn(&env);
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(
+            hooks[1]["command"],
+            format!(
+                "{} hook session-start --via kiro",
+                bin.join("delest").display()
+            )
+        );
+        let main: Value = serde_json::from_str(&render_main(&env)).unwrap();
+        assert_eq!(main["hooks"]["agentSpawn"].as_array().unwrap().len(), 2);
     }
 
     #[test]

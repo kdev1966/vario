@@ -1065,7 +1065,6 @@ fn handoff_connected_in_kiro() {
     assert_eq!(handoff::state(&kiro, &env), State::Connected);
 }
 
-
 #[cfg(unix)]
 #[test]
 fn handoff_in_the_new_clients() {
