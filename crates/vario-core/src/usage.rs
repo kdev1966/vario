@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::clients::Env;
 use crate::clients::claude_code;
@@ -56,6 +56,16 @@ pub struct Usage {
     /// Answers whose output count was estimated from their length: sub-agents'
     /// transcripts can keep only the count from the start of the answer.
     pub estimated: u64,
+    /// The same consumption per working directory (the `cwd` of each answer), for
+    /// tools that show it per project.
+    pub by_directory: BTreeMap<String, DirectoryUsage>,
+}
+
+/// One working directory's consumption, per model.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DirectoryUsage {
+    pub main: BTreeMap<String, Tokens>,
+    pub delegated: BTreeMap<String, Tokens>,
 }
 
 impl Usage {
@@ -80,6 +90,45 @@ impl Usage {
         let all = delegated + self.main_total().output;
         (all > 0).then(|| delegated as f64 * 100.0 / all as f64)
     }
+
+    /// The measure for other tools (`vario usage --json`): tokens per model, in all and
+    /// per working directory.
+    pub fn to_json(&self) -> Value {
+        fn models(models: &BTreeMap<String, Tokens>) -> Value {
+            Value::Object(
+                models
+                    .iter()
+                    .map(|(model, tokens)| {
+                        let counts = json!({
+                            "input": tokens.input,
+                            "output": tokens.output,
+                            "cache_write": tokens.cache_write,
+                            "cache_read": tokens.cache_read,
+                            "processed": tokens.processed(),
+                        });
+                        (model.clone(), counts)
+                    })
+                    .collect(),
+            )
+        }
+        let directories = self
+            .by_directory
+            .iter()
+            .map(|(directory, usage)| {
+                let models = json!({
+                    "main": models(&usage.main),
+                    "delegated": models(&usage.delegated),
+                });
+                (directory.clone(), models)
+            })
+            .collect();
+        json!({
+            "since": self.since,
+            "main": models(&self.main),
+            "delegated": models(&self.delegated),
+            "by_directory": Value::Object(directories),
+        })
+    }
 }
 
 /// Roughly four characters per token, for answers whose count is clearly incomplete.
@@ -89,6 +138,7 @@ const CHARS_PER_TOKEN: u64 = 4;
 struct Answer {
     model: String,
     delegated: bool,
+    directory: Option<String>,
     tokens: Tokens,
     content_chars: u64,
 }
@@ -116,6 +166,18 @@ pub fn claude_code(env: &Env, since: i64) -> Usage {
         if estimate > answer.tokens.output * 2 {
             answer.tokens.output = estimate;
             usage.estimated += 1;
+        }
+        if let Some(directory) = &answer.directory {
+            let place = usage.by_directory.entry(directory.clone()).or_default();
+            let models = if answer.delegated {
+                &mut place.delegated
+            } else {
+                &mut place.main
+            };
+            models
+                .entry(answer.model.clone())
+                .or_default()
+                .add(answer.tokens);
         }
         let models = if answer.delegated {
             &mut usage.delegated
@@ -203,6 +265,7 @@ fn read(
         let answer = Answer {
             model: model.to_string(),
             delegated: in_subagents || entry.get("isSidechain") == Some(&Value::Bool(true)),
+            directory: entry.get("cwd").and_then(Value::as_str).map(str::to_owned),
             tokens,
             content_chars,
         };
@@ -326,6 +389,65 @@ mod tests {
         assert_eq!(usage.delegated_share(), Some(25.0));
         assert_eq!(usage.mcp_calls["context7"], 3);
         assert_eq!(usage.estimated, 0, "the counts were plausible");
+    }
+
+    #[test]
+    fn each_answer_also_counts_for_its_working_directory() {
+        let now = chrono::Utc::now().timestamp();
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join(".claude/projects/-work");
+        fs::create_dir_all(session.join("abc/subagents")).unwrap();
+        let in_dir = |line: String, cwd: &str| {
+            let mut value: Value = serde_json::from_str(&line).unwrap();
+            value["cwd"] = json!(cwd);
+            value.to_string()
+        };
+        let main = [
+            in_dir(
+                line("a1", "claude-opus-5-5", now - 60, 300, "site"),
+                "/work/site",
+            ),
+            in_dir(
+                line("a2", "claude-opus-5-5", now - 50, 200, "tool"),
+                "/work/tool",
+            ),
+            line("a3", "claude-opus-5-5", now - 40, 50, "no directory"),
+        ];
+        fs::write(session.join("abc.jsonl"), main.join("\n")).unwrap();
+        let agent = [in_dir(
+            line("s1", "claude-haiku-5-5", now - 30, 100, "summary"),
+            "/work/site",
+        )];
+        fs::write(
+            session.join("abc/subagents/agent-1.jsonl"),
+            agent.join("\n"),
+        )
+        .unwrap();
+
+        let usage = claude_code(&env_in(dir.path()), now - 3600);
+        assert_eq!(
+            usage.main["claude-opus-5-5"].output, 550,
+            "the total keeps every answer"
+        );
+        assert_eq!(
+            usage.by_directory["/work/site"].main["claude-opus-5-5"].output,
+            300
+        );
+        assert_eq!(
+            usage.by_directory["/work/site"].delegated["claude-haiku-5-5"].output,
+            100
+        );
+        assert_eq!(
+            usage.by_directory["/work/tool"].main["claude-opus-5-5"].output,
+            200
+        );
+        assert_eq!(usage.by_directory.len(), 2);
+        let exported = usage.to_json();
+        assert_eq!(
+            exported["by_directory"]["/work/tool"]["main"]["claude-opus-5-5"]["processed"],
+            310
+        );
+        assert_eq!(exported["since"], now - 3600);
     }
 
     #[test]
