@@ -140,8 +140,14 @@ mod tests {
     #[test]
     fn the_footer_outranks_the_brief_and_the_guidance_names_every_sub_agent() {
         let body = body(&all()[0]);
-        assert!(body.contains("even when the brief sets a format") && body.contains("ESCALATE: yes|no"));
-        assert!(all().iter().all(|subagent| INSTRUCTIONS.contains(&format!("`{}`", subagent.name))));
+        assert!(
+            body.contains("even when the brief sets a format") && body.contains("ESCALATE: yes|no")
+        );
+        assert!(
+            all()
+                .iter()
+                .all(|subagent| INSTRUCTIONS.contains(&format!("`{}`", subagent.name)))
+        );
         assert!(INSTRUCTIONS.contains("this session, always"));
     }
 
