@@ -68,7 +68,11 @@ enum Command {
     /// Summarize the delegations journaled by the hooks.
     Report,
     /// Show the quota, the thermostat and the tokens used, from local logs.
-    Usage,
+    Usage {
+        /// Print the last 7 days' tokens as JSON, in all and per working directory, for other tools.
+        #[arg(long)]
+        json: bool,
+    },
     /// Put back the files as they were before a change by Vario.
     Restore {
         /// Backup folder, by name or path; the most recent one by default.
@@ -134,6 +138,9 @@ fn command_line(lang: Lang) -> clap::Command {
             sub.about(
                 "Afficher le quota, le thermostat et les tokens consommés, d'après les journaux locaux.",
             )
+            .mut_arg("json", |arg| {
+                arg.help("Donner les tokens des 7 derniers jours en JSON, au total et par dossier de travail, pour d'autres outils.")
+            })
         })
         .mut_subcommand("restore", |sub| {
             sub.about("Remettre les fichiers comme avant un changement fait par Vario.")
@@ -225,7 +232,7 @@ fn main() -> ExitCode {
         Command::Remove { dry_run, yes } => commands::remove(&mut ctx, dry_run, yes),
         Command::Doctor { fix, dry_run, yes } => commands::doctor(&mut ctx, fix, dry_run, yes),
         Command::Report => commands::report(&mut ctx),
-        Command::Usage => commands::usage(&mut ctx),
+        Command::Usage { json } => commands::usage(&mut ctx, json),
         Command::Restore { backup, list, yes } => {
             commands::restore(&mut ctx, backup.as_deref(), list, yes)
         }

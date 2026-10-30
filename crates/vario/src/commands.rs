@@ -468,9 +468,14 @@ pub fn report(ctx: &mut Context) -> Result<bool> {
     Ok(true)
 }
 
-pub fn usage(ctx: &mut Context) -> Result<bool> {
+pub fn usage(ctx: &mut Context, json: bool) -> Result<bool> {
     let lang = ctx.ui.lang;
     let now = quota::now();
+    if json {
+        let measured = vario_core::usage::claude_code(&ctx.env, now - 24 * 7 * 3600);
+        ctx.ui.say(measured.to_json().to_string());
+        return Ok(true);
+    }
     match Quota::load(&ctx.data_dir) {
         Some(found) => {
             let seen = chrono::DateTime::from_timestamp(found.captured_at, 0)
